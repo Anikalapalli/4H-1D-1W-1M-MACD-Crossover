@@ -27,7 +27,7 @@ jobs:
       - name: అవసరమైన పైథాన్ లైబ్రరీల ఇన్‌స్టాలేషన్
         run: |
           python -m pip install --upgrade pip
-          pip install smartapi-python pyotp pandas numpy requests yfinance matplotlib logzero websocket-client
+          pip install smartapi-python pyotp pandas numpy requests yfinance matplotlib logzero websocket-client beautifulsoup4
 
       - name: బాటమ్ MACD స్క్రీనర్ రన్ చేయడం
         env:
@@ -50,6 +50,7 @@ jobs:
           import matplotlib
           matplotlib.use('Agg')
           import matplotlib.pyplot as plt
+          from bs4 import BeautifulSoup
           from datetime import datetime, timedelta
           from SmartApi import SmartConnect
 
@@ -63,10 +64,10 @@ jobs:
           CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
           FUNDAMENTAL_CRITERIA = {
-              "min_roe": 0.12,
-              "max_debt_to_equity": 1.2,
-              "max_peg": 2.0,
-              "min_promoter": 0.35,
+              "min_roe": 12.0,            # 12% కంటే ఎక్కువ
+              "max_debt_to_equity": 1.2,   # 1.2 కంటే తక్కువ
+              "max_peg": 2.0,              # 2.0 కంటే తక్కువ
+              "min_promoter": 35.0,        # 35% కంటే ఎక్కువ
           }
 
           SECTOR_PE_BENCHMARKS = {
@@ -133,12 +134,9 @@ jobs:
           def get_top_2000_stocks():
               print("ఏంజెల్ వన్ మాస్టర్ నుండి NSE స్టాక్స్ డౌన్‌లోడ్ అవుతున్నాయి...")
               master_url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-              
-              # టైమౌట్ రాకుండా 90 సెకన్లు మరియు 4 సార్లు రీట్రై చేసే రక్షణ విధానం
               master_data = None
               for attempt in range(1, 5):
                   try:
-                      print(f"మాస్టర్ డేటా డౌన్‌లోడ్ ప్రయత్నం {attempt}...")
                       res = requests.get(master_url, timeout=90)
                       if res.status_code == 200:
                           master_data = res.json()
@@ -149,12 +147,10 @@ jobs:
                       time.sleep(5)
 
               if not master_data:
-                  print("ఏంజెల్ వన్ నుండి స్టాక్స్ డేటా అందలేదు.")
                   return []
 
               valid_stocks = []
               seen_symbols = set()
-
               for item in master_data:
                   if item.get('exch_seg') == 'NSE' and item.get('symbol', '').endswith('-EQ'):
                       sym = item['symbol'].replace('-EQ', '').strip()
@@ -163,35 +159,103 @@ jobs:
                           seen_symbols.add(sym)
                           valid_stocks.append((sym, token))
 
-              top_2000 = valid_stocks[:2000]
-              print(f"స్కాన్ కోసం సిద్ధంగా ఉన్న స్టాక్స్: {len(top_2000)}")
-              return top_2000
+              return valid_stocks[:2000]
+
+          def parse_val(text):
+              if not text or text == 'None':
+                  return None
+              cleaned = text.replace(',', '').replace('%', '').replace('₹', '').strip()
+              try:
+                  return float(cleaned)
+              except ValueError:
+                  return None
 
           def analyze_fundamentals(symbol, current_price, ema20_price):
               try:
-                  ticker = f"{symbol}.NS"
-                  stock = yf.Ticker(ticker)
-                  info = stock.info
+                  headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                  url = f"https://www.screener.in/company/{symbol}/consolidated/"
+                  resp = requests.get(url, headers=headers, timeout=8)
+                  if resp.status_code != 200:
+                      url = f"https://www.screener.in/company/{symbol}/"
+                      resp = requests.get(url, headers=headers, timeout=8)
+                      if resp.status_code != 200:
+                          return None
 
-                  roe = info.get("returnOnEquity")
-                  debt_to_equity = info.get("debtToEquity")
-                  peg_ratio = info.get("pegRatio")
-                  pe_ratio = info.get("trailingPE")
-                  promoter_holding = info.get("heldPercentInsiders")
-                  fii_holding = info.get("heldPercentInstitutions")
-                  profit_growth = info.get("earningsGrowth")
-                  free_cash_flow = info.get("freeCashflow")
-                  sector = info.get("sector", "General")
+                  soup = BeautifulSoup(resp.text, 'html.parser')
 
-                  de_ratio = (debt_to_equity / 100.0) if debt_to_equity is not None else None
-                  sector_pe = SECTOR_PE_BENCHMARKS.get(sector, 24.0)
+                  about_div = soup.find('div', class_='about')
+                  biz_info = "కంపెనీ ప్రధాన ఉత్పత్తులు & సేవల వ్యాపారంలో ఉంది."
+                  if about_div:
+                      p_tag = about_div.find('p')
+                      if p_tag:
+                          full_about = p_tag.text.strip().replace('\n', ' ')
+                          biz_info = (full_about[:160] + '...') if len(full_about) > 160 else full_about
 
-                  if not pe_ratio or pe_ratio <= 0 or not sector_pe:
+                  ratios = {}
+                  for li in soup.find_all('li', class_='flex flex-space-between'):
+                      name_elem = li.find('span', class_='name')
+                      val_elem = li.find('span', class_='nowrap value')
+                      if name_elem and val_elem:
+                          ratios[name_elem.text.strip()] = val_elem.text.strip()
+
+                  roe = parse_val(ratios.get('Return on equity'))
+                  pe_ratio = parse_val(ratios.get('Stock P/E'))
+                  de_ratio = parse_val(ratios.get('Debt to equity'))
+                  if de_ratio is None:
+                      de_ratio = 0.0
+
+                  promoter_holding = None
+                  promoter_pledge = 0.0
+                  fii_holding = None
+                  peg_ratio = None
+                  free_cash_flow = None
+                  profit_growth = None
+
+                  sh_section = soup.find('section', id='shareholding')
+                  if sh_section:
+                      for tr in sh_section.find_all('tr'):
+                          row_name = tr.text.strip()
+                          cells = tr.find_all('td')
+                          if 'Promoters' in row_name and cells:
+                              promoter_holding = parse_val(cells[-1].text)
+                          elif 'Pledged' in row_name and cells:
+                              pval = parse_val(cells[-1].text)
+                              if pval is not None:
+                                  promoter_pledge = pval
+                          elif 'FIIs' in row_name and cells:
+                              fii_holding = parse_val(cells[-1].text)
+
+                  cf_section = soup.find('section', id='cash-flow')
+                  if cf_section:
+                      for tr in cf_section.find_all('tr'):
+                          if 'Cash from Operating Activity' in tr.text:
+                              cells = tr.find_all('td')
+                              if cells:
+                                  val = parse_val(cells[-1].text)
+                                  free_cash_flow = (val > 0) if val is not None else True
+
+                  pl_section = soup.find('section', id='profit-loss')
+                  if pl_section:
+                      for tr in pl_section.find_all('tr'):
+                          if 'Net Profit' in tr.text:
+                              cells = tr.find_all('td')
+                              if len(cells) >= 2:
+                                  curr_p = parse_val(cells[-1].text)
+                                  prev_p = parse_val(cells[-2].text)
+                                  if curr_p is not None and prev_p is not None:
+                                      profit_growth = (curr_p >= prev_p)
+                                      growth_rate = ((curr_p - prev_p) / abs(prev_p)) * 100 if prev_p != 0 else 0
+                                      if growth_rate > 0 and pe_ratio:
+                                          peg_ratio = round(pe_ratio / growth_rate, 2)
+
+                  sector = "General"
+                  sector_pe = SECTOR_PE_BENCHMARKS.get(sector, 25.0)
+
+                  if not pe_ratio or pe_ratio <= 0:
                       return None
 
                   is_pe_discounted = (pe_ratio < sector_pe)
                   pe_color = "🟢" if is_pe_discounted else "🔴"
-
                   if not is_pe_discounted:
                       return None
 
@@ -199,35 +263,30 @@ jobs:
                   valuation_status = f"🟢 *డిస్కౌంట్ లో దొరుకుతుంది ({pe_diff}% చౌక)*"
                   buy_recommendation = f"ప్రస్తుత ధర వద్ద: ₹{current_price} (సపోర్ట్: ₹{ema20_price})"
 
-                  fii_color = "🟢"
-                  try:
-                      inst_holders = stock.institutional_holders
-                      if inst_holders is not None and not inst_holders.empty and '% Out' in inst_holders.columns:
-                          latest_pct = inst_holders['% Out'].dropna().values
-                          if len(latest_pct) >= 2 and latest_pct[0] < latest_pct[1]:
-                              fii_color = "🔴"
-                      elif fii_holding is not None and fii_holding < 0.10:
-                          fii_color = "🔴"
-                  except Exception:
-                      fii_color = "🟢" if (fii_holding and fii_holding >= 0.12) else "🔴"
+                  fii_color = "🟢" if (fii_holding and fii_holding >= 10.0) else "🔴"
+                  fii_text = f"{fii_holding}%" if fii_holding is not None else "N/A"
 
                   c_roe = (roe is not None and roe >= FUNDAMENTAL_CRITERIA["min_roe"])
                   c_de = (de_ratio is not None and de_ratio <= FUNDAMENTAL_CRITERIA["max_debt_to_equity"])
                   c_peg = (peg_ratio is not None and 0 < peg_ratio <= FUNDAMENTAL_CRITERIA["max_peg"])
                   c_prom = (promoter_holding is not None and promoter_holding >= FUNDAMENTAL_CRITERIA["min_promoter"])
-                  c_profit = (profit_growth is not None and profit_growth > 0)
-                  c_fcf = (free_cash_flow is not None and free_cash_flow > 0)
+                  c_profit = (profit_growth is not False)
+                  c_fcf = (free_cash_flow is not False)
 
                   score = sum([c_roe, c_de, c_peg, c_prom, c_profit, c_fcf])
 
-                  details = (
-                      f"  {'🟢' if c_roe else '🔴'} *ROE:* {round(roe * 100, 1) if roe else 'N/A'}% (> 12%)\n"
-                      f"  {'🟢' if c_de else '🔴'} *D/E:* {round(de_ratio, 2) if de_ratio else 'N/A'} (< 1.2)\n"
-                      f"  {'🟢' if c_peg else '🔴'} *PEG:* {round(peg_ratio, 2) if peg_ratio else 'N/A'} (< 2.0)\n"
-                      f"  {'🟢' if c_prom else '🔴'} *Promoter:* {round(promoter_holding * 100, 1) if promoter_holding else 'N/A'}% (> 35%)\n"
-                      f"  {'🟢' if c_fcf else '🔴'} *Free Cash Flow:* {'పాజిటివ్' if c_fcf else 'నెగెటివ్'}\n"
-                      f"  {'🟢' if c_profit else '🔴'} *Profit Growth:* {'పాజిటివ్' if c_profit else 'నెగెటివ్'}"
-                  )
+                  roe_desc = f"ఈ కంపెనీ షేర్ మీద ఏడాదికి {roe}% లాభం సంపాదిస్తోంది" if roe else "లాభాల శాతం అందుబాటులో లేదు"
+                  de_desc = "కంపెనీకి అప్పుల భారం లేదు (చాలా సురక్షితం)" if (de_ratio is not None and de_ratio <= 1.2) else "కంపెనీకి అప్పుల భారం ఎక్కువగా ఉంది"
+                  peg_desc = "లాభాల పెరుగుదలకు తగిన సరసమైన ధరలో ఉంది" if (peg_ratio and peg_ratio <= 2.0) else "లాభాల పెరుగుదల కంటే ప్రస్తుత షేరు ధర కాస్త ఎక్కువగా ఉంది"
+                  fcf_desc = "ఖర్చులు పోను కంపెనీ చేతిలో నికర నగదు మిగులుతోంది" if c_fcf else "కంపెనీ చేతిలో ఖర్చులు పోను నికర నగదు మిగలడం లేదు"
+                  profit_desc = "గతంతో పోలిస్తే కంపెనీ నికర లాభాలు పెరుగుతున్నాయి" if c_profit else "గతంతో పోలిస్తే కంపెనీ నికర లాభాలు తగ్గుతున్నాయి"
+                  pe_desc = f"సెక్టార్ కంటే ఈ షేరు {pe_diff}% తక్కువ ధరకు (చౌకగా) లభిస్తోంది"
+                  promoter_desc = f"కంపెనీ యజమానుల వద్దే {promoter_holding}% వాటా ఉంది" if promoter_holding else "యజమానుల వాటా వివరాలు లేవు"
+
+                  if promoter_pledge > 0:
+                      pledge_text = f"⚠️ *తాకట్టు:* {promoter_pledge}% షేర్లు తాకట్టులో ఉన్నాయి"
+                  else:
+                      pledge_text = "🔒 *తాకట్టు:* 0.0% (ఒక్క షేరు కూడా తాకట్టు పెట్టలేదు, చాలా సురక్షితం)"
 
                   risk_note = ""
                   if not c_profit:
@@ -239,21 +298,39 @@ jobs:
                           "• 4H బాటమ్ MACD రివర్సల్ ఉన్నందున సపోర్ట్ వద్ద ఎంట్రీ పరిశీలించవచ్చు.\n"
                       )
 
-                  fii_text = f"{round(fii_holding * 100, 1)}%" if fii_holding is not None else "N/A"
-
                   return {
                       "is_discounted": True,
                       "score_val": score,
                       "pe_diff": pe_diff,
                       "score_text": f"{score}/6",
-                      "fund_details": details,
+                      "roe": roe,
+                      "de_ratio": de_ratio,
+                      "peg_ratio": peg_ratio,
+                      "c_roe": c_roe,
+                      "c_de": c_de,
+                      "c_peg": c_peg,
+                      "c_fcf": c_fcf,
+                      "c_profit": c_profit,
+                      "c_prom": c_prom,
+                      "pe_color": pe_color,
+                      "pe_ratio": pe_ratio,
+                      "sector_pe": sector_pe,
+                      "promoter_holding": promoter_holding,
+                      "roe_desc": roe_desc,
+                      "de_desc": de_desc,
+                      "peg_desc": peg_desc,
+                      "fcf_desc": fcf_desc,
+                      "profit_desc": profit_desc,
+                      "pe_desc": pe_desc,
+                      "promoter_desc": promoter_desc,
+                      "pledge_text": pledge_text,
                       "risk_note": risk_note,
-                      "fii_line": f"{fii_color} *FII హోల్డింగ్:* {fii_text}",
-                      "pe_line": f"{pe_color} *P/E:* స్టాక్ {round(pe_ratio, 1)} vs సెక్టార్ {sector_pe}",
+                      "fii_line": f"🔴 *FII హోల్డింగ్:* {fii_text}" if fii_color == "🔴" else f"🟢 *FII హోల్డింగ్:* {fii_text}",
                       "val_status": valuation_status,
-                      "buy_advice": buy_recommendation
+                      "buy_advice": buy_recommendation,
+                      "business_model": biz_info
                   }
-              except Exception:
+              except Exception as e:
                   return None
 
           def get_color_coded_macd(series, fast=12, slow=26, signal_span=9):
@@ -367,7 +444,6 @@ jobs:
 
               stat_1d, d_fresh, d_bull = get_color_coded_macd(df_d['close'])
 
-              # 4-గంటల MACD గణన
               param_hourly = {
                   "exchange": "NSE",
                   "symboltoken": str(token),
@@ -452,7 +528,6 @@ jobs:
                   send_telegram("📊 *బాటమ్ MACD స్క్రీనర్ అలర్ట్*\n\n_ఈరోజు 4H/డైలీ లో బాటమ్ MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు._")
                   return
 
-              # నాణ్యత ఆధారంగా సార్టింగ్ (అత్యుత్తమ స్టాక్ S.No.1 అవుతుంది):
               results.sort(
                   key=lambda x: (
                       x[1].get('score_val', 0),
@@ -463,9 +538,7 @@ jobs:
                   reverse=True
               )
 
-              # అత్యుత్తమ టాప్ 10 స్టాక్స్ మాత్రమే ఎంపిక
               top_10_stocks = results[:10]
-
               today_str = datetime.now().strftime("%d-%m-%Y")
               header_msg = (
                   f"📉➡️📈 *NSE టాప్ 2000 4H బాటమ్ MACD అలర్ట్స్ ({today_str})*\n"
@@ -477,34 +550,43 @@ jobs:
               header_msg += "────────────────────"
               send_telegram(header_msg)
 
-              # ర్యాంక్ 1 నుండి ర్యాంక్ 10 వరకు చార్ట్ ఫోటోలు & పూర్తి విశ్లేషణ పంపడం
               for rank, (sym, d) in enumerate(top_10_stocks, 1):
-                  investing_url = f"https://in.investing.com/search/?q={sym}"
-                  tradingview_url = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
-
                   is_high_conviction = (d.get('score_val', 0) >= 5) and (d['is_4h_fresh'] or d['is_daily_fresh'])
                   conviction_tag = "🌟 *హై-కన్విక్షన్ బాటమ్ సెటప్*\n" if is_high_conviction else ""
 
+                  # టెలిగ్రామ్ Blockquote (ఒకే నిరంతర కలర్ లైన్) + స్పాయిలర్ బిజినెస్ మోడల్
                   caption = (
                       f"🏆 *ర్యాంక్: S.No.{rank}* | 🔥 *{sym}* — ₹{d['price']}\n"
                       f"{conviction_tag}"
-                      f"• 💰 *వాల్యూమ్:* *{d['vol_boost']}x*\n"
-                      f"────────────────────\n"
-                      f"📊 *MACD 2-లైన్ల స్థితి:*\n"
-                      f"⏱️ *4H :* {d['stat_4h']}\n"
-                      f"☀️ *1D :* {d['stat_1d']}\n"
-                      f"📅 *1W :* {d['stat_1w']}\n"
-                      f"🌕 *1M :* {d['stat_1m']}\n"
-                      f"────────────────────\n"
-                      f"• 📈 *Fundamental Score: {d['score_text']}*\n"
-                      f"{d['fund_details']}\n"
-                      f"────────────────────\n"
-                      f"{d['fii_line']}\n"
-                      f"{d['pe_line']}\n"
-                      f"{d['val_status']}\n"
+                      f"• 💰 *వాల్యూమ్:* *{d['vol_boost']}x*\n\n"
+                      f"> 📊 *MACD 2-లైన్ల స్థితి:*\n"
+                      f"> ⏱️ *4H :* {d['stat_4h']}\n"
+                      f"> ☀️ *1D :* {d['stat_1d']}\n"
+                      f"> 📅 *1W :* {d['stat_1w']}\n"
+                      f"> 🌕 *1M :* {d['stat_1m']}\n"
+                      f">\n"
+                      f"> • 📈 *Fundamental Score: {d['score_text']}*\n"
+                      f">   {'🟢' if d['c_roe'] else '🔴'} *ROE:* {d['roe'] if d['roe'] is not None else 'N/A'}% (> 12%)\n"
+                      f">     └ _{d['roe_desc']}_\n"
+                      f">   {'🟢' if d['c_de'] else '🔴'} *D/E:* {d['de_ratio'] if d['de_ratio'] is not None else 'N/A'} (< 1.2)\n"
+                      f">     └ _{d['de_desc']}_\n"
+                      f">   {'🟢' if d['c_peg'] else '🔴'} *PEG:* {d['peg_ratio'] if d['peg_ratio'] is not None else 'N/A'} (< 2.0)\n"
+                      f">     └ _{d['peg_desc']}_\n"
+                      f">   {'🟢' if d['c_fcf'] else '🔴'} *Free Cash Flow:* {'పాజిటివ్' if d['c_fcf'] else 'నెగెటివ్'}\n"
+                      f">     └ _{d['fcf_desc']}_\n"
+                      f">   {'🟢' if d['c_profit'] else '🔴'} *Profit Growth:* {'పాజిటివ్' if d['c_profit'] else 'నెగెటివ్'}\n"
+                      f">     └ _{d['profit_desc']}_\n"
+                      f">   {d['pe_color']} *P/E:* స్టాక్ {round(d['pe_ratio'], 1)} vs సెక్టార్ {d['sector_pe']}\n"
+                      f">     └ _{d['pe_desc']}_\n"
+                      f">\n"
+                      f">   {'🟢' if d['c_prom'] else '🔴'} *Promoter:* {d['promoter_holding'] if d['promoter_holding'] is not None else 'N/A'}% (> 35%)\n"
+                      f">     └ _{d['promoter_desc']}_\n"
+                      f">     └ _{d['pledge_text']}_\n"
+                      f"> {d['fii_line']}\n"
+                      f"> {d['val_status']}\n\n"
                       f"🎯 *కొనుగోలు:* {d['buy_advice']}\n"
-                      f"{d['risk_note']}"
-                      f"• 🔗 [Investing India లో చూడండి]({investing_url}) | [TradingView]({tradingview_url})"
+                      f"🏢 *వ్యాపారం (Business):* ||{d['business_model']}||\n"
+                      f"{d['risk_note']}".rstrip()
                   )
 
                   chart_buf = generate_live_chart_image(d['df_daily'], sym)
