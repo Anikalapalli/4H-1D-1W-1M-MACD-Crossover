@@ -35,8 +35,9 @@ jobs:
           ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
           ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
           ANGEL_TOTP_KEY: ${{ secrets.ANGEL_TOTP_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVER: "ashedmulla@gmail.com"
         run: |
           python - << 'EOF'
           import os
@@ -44,6 +45,7 @@ jobs:
           import time
           import requests
           import pyotp
+          import smtplib
           import numpy as np
           import pandas as pd
           import yfinance as yf
@@ -52,6 +54,9 @@ jobs:
           import matplotlib.pyplot as plt
           from bs4 import BeautifulSoup
           from datetime import datetime, timedelta
+          from email.mime.multipart import MIMEMultipart
+          from email.mime.text import MIMEText
+          from email.mime.image import MIMEImage
           from SmartApi import SmartConnect
 
           # --- GitHub Secrets నుండి ఆధారాలు ---
@@ -60,8 +65,9 @@ jobs:
           PIN = os.getenv("ANGEL_PIN")
           TOTP_KEY = os.getenv("ANGEL_TOTP_KEY")
 
-          BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-          CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+          EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+          EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+          EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER") or "ashedmulla@gmail.com"
 
           FUNDAMENTAL_CRITERIA = {
               "min_roe": 12.0,            # 12% కంటే ఎక్కువ
@@ -84,33 +90,32 @@ jobs:
               "Real Estate": 25.0
           }
 
-          def send_telegram(message):
-              if not BOT_TOKEN or not CHAT_ID:
+          def send_email_digest(subject, html_content, charts_dict):
+              if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
+                  print("ఈమెయిల్ క్రెడెన్షియల్స్ సరిగ్గా లేవు.")
                   return
-              url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-              max_len = 3800
-              chunks = [message[i:i+max_len] for i in range(0, len(message), max_len)]
-              for chunk in chunks:
-                  payload = {"chat_id": CHAT_ID, "text": chunk, "parse_mode": "Markdown"}
-                  try:
-                      res = requests.post(url, json=payload, timeout=25)
-                      if res.status_code != 200:
-                          payload_plain = {"chat_id": CHAT_ID, "text": chunk}
-                          requests.post(url, json=payload_plain, timeout=25)
-                  except Exception as e:
-                      print(f"టెలిగ్రామ్ ఎర్రర్: {e}")
-
-          def send_telegram_photo(photo_bytes, caption):
-              if not BOT_TOKEN or not CHAT_ID:
-                  return
-              url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-              files = {"photo": ("macd_chart.png", photo_bytes, "image/png")}
-              data = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "Markdown"}
               try:
-                  requests.post(url, files=files, data=data, timeout=30)
-                  print("చార్ట్ ఫోటో పంపబడింది.")
+                  msg = MIMEMultipart('related')
+                  msg['Subject'] = subject
+                  msg['From'] = EMAIL_SENDER
+                  msg['To'] = EMAIL_RECEIVER
+
+                  alt_part = MIMEMultipart('alternative')
+                  msg.attach(alt_part)
+                  alt_part.attach(MIMEText(html_content, 'html', 'utf-8'))
+
+                  for cid, img_buf in charts_dict.items():
+                      img = MIMEImage(img_buf.getvalue(), 'png')
+                      img.add_header('Content-ID', f'<{cid}>')
+                      img.add_header('Content-Disposition', 'inline', filename=f"{cid}.png")
+                      msg.attach(img)
+
+                  with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=60) as server:
+                      server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+                      server.sendmail(EMAIL_SENDER, [EMAIL_RECEIVER], msg.as_string())
+                  print("✅ ఈమెయిల్ విజయవంతంగా పంపబడింది!")
               except Exception as e:
-                  print(f"ఫోటో ఎర్రర్: {e}")
+                  print(f"❌ ఈమెయిల్ లోపం: {e}")
 
           def get_angel_session():
               if not all([API_KEY, CLIENT_CODE, PIN, TOTP_KEY]):
@@ -198,7 +203,7 @@ jobs:
                       if name_elem and val_elem:
                           ratios[name_elem.text.strip()] = val_elem.text.strip()
 
-                  # ROE విశ్లేషణను మెరుగుపరచడం (ROE లేదా Return on equity రెండింటినీ పరిశీలించడం)
+                  # ROE విశ్లేషణను మెరుగుపరచడం
                   roe_raw = ratios.get('ROE') or ratios.get('Return on equity')
                   if not roe_raw:
                       for li in soup.find_all('li'):
@@ -448,7 +453,6 @@ jobs:
               if curr_close < curr_open:
                   return None
 
-              # సరిచేసిన వాల్యూమ్ సగటు లెక్కింపు (NaN మరియు 0 డివిజన్ నివారణ)
               if len(df_d['volume']) < 22:
                   return None
 
@@ -512,7 +516,7 @@ jobs:
           def main():
               smart_api = get_angel_session()
               if not smart_api:
-                  send_telegram("⚠️ *స్క్రీనర్:* ఏంజెల్ వన్ లాగిన్ విఫలమైంది. GitHub Secrets తనిఖీ చేయండి.")
+                  send_email_digest("NSE TOP 2000 - ఎర్రర్ అలర్ట్", "<h3>⚠️ ఏంజెల్ వన్ లాగిన్ విఫలమైంది. GitHub Secrets తనిఖీ చేయండి.</h3>", {})
                   return
 
               to_date = datetime.now().strftime("%Y-%m-%d 15:30")
@@ -521,7 +525,7 @@ jobs:
 
               stocks = get_top_2000_stocks()
               if not stocks:
-                  send_telegram("⚠️ *స్క్రీనర్:* ఏంజెల్ వన్ నుండి స్టాక్స్ డేటా డౌన్‌లోడ్ కాలేదు.")
+                  send_email_digest("NSE TOP 2000 - ఎర్రర్ అలర్ట్", "<h3>⚠️ ఏంజెల్ వన్ నుండి స్టాక్స్ డేటా డౌన్‌లోడ్ కాలేదు.</h3>", {})
                   return
 
               results = []
@@ -542,8 +546,11 @@ jobs:
                   except Exception:
                       continue
 
+              today_str = datetime.now().strftime("%d-%m-%Y")
+              email_subject = f"NSE TOP 2000 4H బాటమ్ MACD అలర్ట్స్ ({today_str})"
+
               if not results:
-                  send_telegram("📊 *బాటమ్ MACD స్క్రీనర్ అలర్ట్*\n\n_ఈరోజు 4H/డైలీ లో బాటమ్ MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు._")
+                  send_email_digest(email_subject, "<h3>📊 బాటమ్ MACD స్క్రీనర్ అలర్ట్</h3><p><em>ఈరోజు 4H/డైలీ లో బాటమ్ MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు.</em></p>", {})
                   return
 
               results.sort(
@@ -557,58 +564,98 @@ jobs:
               )
 
               top_10_stocks = results[:10]
-              today_str = datetime.now().strftime("%d-%m-%Y")
-              header_msg = (
-                  f"📉➡️📈 *NSE టాప్ 2000 4H బాటమ్ MACD అలర్ట్స్ ({today_str})*\n"
-                  f"🏆 *నాణ్యత ఆధారంగా టాప్ 10 ర్యాంకుల జాబితా:*\n"
-                  f"────────────────────\n"
-              )
+              
+              summary_rows = ""
               for r, (s, d) in enumerate(top_10_stocks, 1):
-                  header_msg += f"*{r}. {s}* — ₹{d['price']} (స్కోర్: {d['score_text']})\n"
-              header_msg += "────────────────────"
-              send_telegram(header_msg)
+                  summary_rows += f"<tr><td style='padding: 6px 12px; border: 1px solid #ddd;'><b>{r}. {s}</b></td><td style='padding: 6px 12px; border: 1px solid #ddd;'>₹{d['price']}</td><td style='padding: 6px 12px; border: 1px solid #ddd;'>{d['score_text']}</td><td style='padding: 6px 12px; border: 1px solid #ddd;'>{d['vol_boost']}x</td></tr>"
+
+              cards_html = f"""
+              <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 15px; color: #222;">
+                  <h2 style="color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px;">📉➡️📈 NSE TOP 2000 4H బాటమ్ MACD అలర్ట్స్ ({today_str})</h2>
+                  <h3 style="margin-top: 15px;">🏆 నాణ్యత ఆధారంగా టాప్ 10 ర్యాంకుల జాబితా:</h3>
+                  <table style="border-collapse: collapse; width: 100%; margin-bottom: 30px; font-size: 14px;">
+                      <tr style="background-color: #f1f3f4; text-align: left;">
+                          <th style="padding: 8px 12px; border: 1px solid #ddd;">స్టాక్</th>
+                          <th style="padding: 8px 12px; border: 1px solid #ddd;">ధర</th>
+                          <th style="padding: 8px 12px; border: 1px solid #ddd;">స్కోర్</th>
+                          <th style="padding: 8px 12px; border: 1px solid #ddd;">వాల్యూమ్</th>
+                      </tr>
+                      {summary_rows}
+                  </table>
+                  <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+              """
+
+              charts_dict = {}
 
               for rank, (sym, d) in enumerate(top_10_stocks, 1):
-                  is_high_conviction = (d.get('score_val', 0) >= 5) and (d['is_4h_fresh'] or d['is_daily_fresh'])
-                  conviction_tag = "🌟 *హై-కన్విక్షన్ బాటమ్ సెటప్*\n" if is_high_conviction else ""
-
-                  caption = (
-                      f"🏆 *ర్యాంక్: S.No.{rank}* | 🔥 *{sym}* — ₹{d['price']}\n"
-                      f"{conviction_tag}"
-                      f"• 💰 *వాల్యూమ్:* *{d['vol_boost']}x*\n\n"
-                      f"> 📊 *MACD 2-లైన్ల స్థితి:*\n"
-                      f"> ⏱️ *4H :* {d['stat_4h']}\n"
-                      f"> ☀️ *1D :* {d['stat_1d']}\n"
-                      f"> 📅 *1W :* {d['stat_1w']}\n"
-                      f"> 🌕 *1M :* {d['stat_1m']}\n"
-                      f">\n"
-                      f"> • 📈 *Fundamental Score: {d['score_text']}*\n"
-                      f">   {'🟢' if d['c_roe'] else '🔴'} *ROE:* {d['roe'] if d['roe'] is not None else 'N/A'}% (> 12%)\n"
-                      f">     └ _{d['roe_desc']}_\n"
-                      f">   {'🟢' if d['c_de'] else '🔴'} *D/E:* {d['de_ratio'] if d['de_ratio'] is not None else 'N/A'} (< 1.2)\n"
-                      f">     └ _{d['de_desc']}_\n"
-                      f">   {'🟢' if d['c_peg'] else '🔴'} *PEG:* {d['peg_ratio'] if d['peg_ratio'] is not None else 'N/A'} (< 2.0)\n"
-                      f">     └ _{d['peg_desc']}_\n"
-                      f">   {'🟢' if d['c_fcf'] else '🔴'} *Free Cash Flow:* {'పాజిటివ్' if d['c_fcf'] else 'నెగెటివ్'}\n"
-                      f">     └ _{d['fcf_desc']}_\n"
-                      f">   {'🟢' if d['c_profit'] else '🔴'} *Profit Growth:* {'పాజిటివ్' if d['c_profit'] else 'నెగెటివ్'}\n"
-                      f">     └ _{d['profit_desc']}_\n"
-                      f">   {d['pe_color']} *P/E:* స్టాక్ {round(d['pe_ratio'], 1)} vs సెక్టార్ {d['sector_pe']}\n"
-                      f">     └ _{d['pe_desc']}_\n"
-                      f">\n"
-                      f">   {'🟢' if d['c_prom'] else '🔴'} *Promoter:* {d['promoter_holding'] if d['promoter_holding'] is not None else 'N/A'}% (> 35%)\n"
-                      f">     └ _{d['promoter_desc']}_\n"
-                      f">     └ _{d['pledge_text']}_\n"
-                      f"> {d['fii_line']}\n"
-                      f"> {d['val_status']}\n\n"
-                      f"🎯 *కొనుగోలు:* {d['buy_advice']}\n"
-                      f"🏢 *వ్యాపారం (Business):* ||{d['business_model']}||\n"
-                      f"{d['risk_note']}".rstrip()
-                  )
-
+                  cid = f"chart_{sym}_{rank}"
                   chart_buf = generate_live_chart_image(d['df_daily'], sym)
-                  send_telegram_photo(chart_buf, caption)
-                  time.sleep(2)
+                  charts_dict[cid] = chart_buf
+
+                  is_high_conviction = (d.get('score_val', 0) >= 5) and (d['is_4h_fresh'] or d['is_daily_fresh'])
+                  conviction_tag = "<div style='color: #d93025; font-weight: bold; margin-bottom: 8px;'>🌟 హై-కన్విక్షన్ బాటమ్ సెటప్</div>" if is_high_conviction else ""
+
+                  risk_html = ""
+                  if not d['c_profit']:
+                      risk_html = """
+                      <div style="background-color: #fce8e6; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 13px;">
+                          <b>ℹ️ 🔴 నెగెటివ్ ప్రాఫిట్ గ్రోత్ ఉన్నా ఎందుకు కొనవచ్చు:</b><br>
+                          • కంపెనీకి అప్పుల భారం లేదు (D/E &lt; 1.2) &amp; క్యాష్ ఫ్లో బలంగా ఉంది.<br>
+                          • లాభాలు తగ్గడం వల్లనే షేరు డిస్కౌంట్ ధరకు లభిస్తోంది.<br>
+                          • 4H బాటమ్ MACD రివర్సల్ ఉన్నందున సపోర్ట్ వద్ద ఎంట్రీ పరిశీలించవచ్చు.
+                      </div>
+                      """
+
+                  cards_html += f"""
+                  <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 18px; margin-bottom: 30px; background-color: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+                      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 12px;">
+                          <h3 style="margin: 0; color: #202124;">🏆 ర్యాంక్: S.No.{rank} | 🔥 <span style="color: #1a73e8;">{sym}</span> — ₹{d['price']}</h3>
+                      </div>
+                      {conviction_tag}
+                      <p style="margin: 6px 0; font-size: 14px;">• 💰 <b>వాల్యూమ్:</b> <b>{d['vol_boost']}x</b></p>
+                      
+                      <div style="margin: 15px 0; text-align: center;">
+                          <img src="cid:{cid}" alt="{sym} చార్ట్" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 6px;">
+                      </div>
+
+                      <div style="background-color: #f8f9fa; padding: 14px; border-radius: 6px; font-size: 13.5px; line-height: 1.6;">
+                          <b>📊 MACD 2-లైన్ల స్థితి:</b><br>
+                          ⏱️ <b>4H :</b> {d['stat_4h']}<br>
+                          ☀️ <b>1D :</b> {d['stat_1d']}<br>
+                          📅 <b>1W :</b> {d['stat_1w']}<br>
+                          🌕 <b>1M :</b> {d['stat_1m']}<br>
+                          <br>
+                          <b>• 📈 Fundamental Score: {d['score_text']}</b><br>
+                          {'🟢' if d['c_roe'] else '🔴'} <b>ROE:</b> {d['roe'] if d['roe'] is not None else 'N/A'}% (&gt; 12%)<br>
+                          <span style="color: #555; padding-left: 18px;">└ <em>{d['roe_desc']}</em></span><br>
+                          {'🟢' if d['c_de'] else '🔴'} <b>D/E:</b> {d['de_ratio'] if d['de_ratio'] is not None else 'N/A'} (&lt; 1.2)<br>
+                          <span style="color: #555; padding-left: 18px;">└ <em>{d['de_desc']}</em></span><br>
+                          {'🟢' if d['c_peg'] else '🔴'} <b>PEG:</b> {d['peg_ratio'] if d['peg_ratio'] is not None else 'N/A'} (&lt; 2.0)<br>
+                          <span style="color: #555; padding-left: 18px;">└ <em>{d['peg_desc']}</em></span><br>
+                          {'🟢' if d['c_fcf'] else '🔴'} <b>Free Cash Flow:</b> {'పాజిటివ్' if d['c_fcf'] else 'నెగెటివ్'}<br>
+                          <span style="color: #555; padding-left: 18px;">└ <em>{d['fcf_desc']}</em></span><br>
+                          {'🟢' if d['c_profit'] else '🔴'} <b>Profit Growth:</b> {'పాజిటివ్' if d['c_profit'] else 'నెగెటివ్'}<br>
+                          <span style="color: #555; padding-left: 18px;">└ <em>{d['profit_desc']}</em></span><br>
+                          {d['pe_color']} <b>P/E:</b> స్టాక్ {round(d['pe_ratio'], 1)} vs సెక్టార్ {d['sector_pe']}<br>
+                          <span style="color: #555; padding-left: 18px;">└ <em>{d['pe_desc']}</em></span><br>
+                          <br>
+                          {'🟢' if d['c_prom'] else '🔴'} <b>Promoter:</b> {d['promoter_holding'] if d['promoter_holding'] is not None else 'N/A'}% (&gt; 35%)<br>
+                          <span style="color: #555; padding-left: 18px;">└ <em>{d['promoter_desc']}</em></span><br>
+                          <span style="color: #555; padding-left: 18px;">└ <em>{d['pledge_text']}</em></span><br>
+                          {d['fii_line']}<br>
+                          {d['val_status']}
+                      </div>
+
+                      <div style="margin-top: 12px; font-size: 14px;">
+                          🎯 <b>కొనుగోలు:</b> {d['buy_advice']}<br>
+                          🏢 <b>వ్యాపారం (Business):</b> {d['business_model']}
+                      </div>
+                      {risk_html}
+                  </div>
+                  """
+
+              cards_html += "</div>"
+              send_email_digest(email_subject, cards_html, charts_dict)
 
           if __name__ == "__main__":
               main()
