@@ -104,7 +104,6 @@ jobs:
               if not BOT_TOKEN or not CHAT_ID:
                   return
               url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-              # టెలిగ్రామ్ క్యాప్షన్ 1024 అక్షరాల లిమిట్ మించకుండా సేఫ్ ట్రిమ్
               trimmed_caption = caption[:1020]
               files = {"photo": ("macd_chart.png", photo_bytes, "image/png")}
               data = {"chat_id": CHAT_ID, "caption": trimmed_caption, "parse_mode": "Markdown"}
@@ -114,7 +113,6 @@ jobs:
                       print("చార్ట్ ఫోటో పంపబడింది.")
                   else:
                       print(f"ఫోటో API రెస్పాన్స్ ఎర్రర్: {res.text}")
-                      # మార్క్‌డౌన్ పార్సింగ్ ఫెయిల్ అయితే ప్లెయిన్ టెక్స్ట్‌తో రీ-ట్రై
                       data.pop("parse_mode", None)
                       requests.post(url, files={"photo": ("macd_chart.png", photo_bytes, "image/png")}, data=data, timeout=35)
               except Exception as e:
@@ -197,7 +195,7 @@ jobs:
                       p_tag = about_div.find('p')
                       if p_tag:
                           full_about = p_tag.text.strip().replace('\n', ' ')
-                          biz_info = (full_about[:130] + '...') if len(full_about) > 130 else full_about
+                          biz_info = (full_about[:120] + '...') if len(full_about) > 120 else full_about
 
                   ratios = {}
                   for li in soup.find_all('li', class_='flex flex-space-between'):
@@ -284,12 +282,8 @@ jobs:
                   score = sum([c_roe, c_de, c_peg, c_prom, c_profit, c_fcf])
 
                   roe_desc = f"ఈ కంపెనీ షేర్ మీద ఏడాదికి {roe}% లాభం సంపాదిస్తోంది" if roe else "లాభాల శాతం అందుబాటులో లేదు"
-                  de_desc = "కంపెనీకి అప్పుల భారం లేదు (సురక్షితం)" if (de_ratio is not None and de_ratio <= 1.2) else "కంపెనీకి అప్పుల భారం ఎక్కువగా ఉంది"
-                  peg_desc = "లాభాల పెరుగుదలకు సరసమైన ధర" if (peg_ratio and peg_ratio <= 2.0) else "లాభాల పెరుగుదల కంటే ధర ఎక్కువ"
-                  fcf_desc = "కంపెనీ చేతిలో నికర నగదు మిగులుతోంది" if c_fcf else "నికర నగదు మిగలడం లేదు"
-                  profit_desc = "నికర లాభాలు పెరుగుతున్నాయి" if c_profit else "నికర లాభాలు తగ్గుతున్నాయి"
-                  pe_desc = f"సెక్టార్ కంటే {pe_diff}% చౌక"
-                  promoter_desc = f"యజమానుల వాటా {promoter_holding}%" if promoter_holding else "వాటా వివరాలు లేవు"
+                  de_desc = "కంపెనీకి అప్పుల భారం లేదు (చాలా సురక్షితం)" if (de_ratio is not None and de_ratio <= 1.2) else "కంపెనీకి అప్పుల భారం ఎక్కువగా ఉంది"
+                  peg_desc = "లాభాల పెరుగుదలకు సరసమైన ధర" if (peg_ratio and peg_ratio <= 2.0) else "ధర కాస్త ఎక్కువ"
 
                   if promoter_pledge > 0:
                       pledge_text = f"⚠️ *తాకట్టు:* {promoter_pledge}% షేర్లు ఉన్నాయి"
@@ -298,7 +292,7 @@ jobs:
 
                   risk_note = ""
                   if not c_profit:
-                      risk_note = "\nℹ️ *నెగెటివ్ గ్రోత్ ఉన్నా D/E తక్కువగా ఉండటం & బాటమ్ MACD రివర్సల్ వల్ల ఎంట్రీ పరిశీలించవచ్చు.*"
+                      risk_note = "\nℹ️ *నెగెటివ్ గ్రోత్ ఉన్నా D/E తక్కువగా ఉండటం వల్ల ఎంట్రీ పరిశీలించవచ్చు.*"
 
                   return {
                       "is_discounted": True,
@@ -321,10 +315,6 @@ jobs:
                       "roe_desc": roe_desc,
                       "de_desc": de_desc,
                       "peg_desc": peg_desc,
-                      "fcf_desc": fcf_desc,
-                      "profit_desc": profit_desc,
-                      "pe_desc": pe_desc,
-                      "promoter_desc": promoter_desc,
                       "pledge_text": pledge_text,
                       "risk_note": risk_note,
                       "fii_line": f"🔴 *FII హోల్డింగ్:* {fii_text}" if fii_color == "🔴" else f"🟢 *FII హోల్డింగ్:* {fii_text}",
@@ -566,10 +556,15 @@ jobs:
                       f"> 📅 *1W :* {d['stat_1w']}\n"
                       f"> 🌕 *1M :* {d['stat_1m']}\n"
                       f">\n"
-                      f"> • 📈 *స్కోర్: {d['score_text']}* | ROE: {d['roe']}% | D/E: {d['de_ratio']}\n"
+                      f"> • 📈 *Fundamental Score: {d['score_text']}*\n"
+                      f">   {'🟢' if d['c_roe'] else '🔴'} *ROE:* {d['roe']}% (> 12%)\n"
+                      f">     └ _{d['roe_desc']}_\n"
+                      f">   {'🟢' if d['c_de'] else '🔴'} *D/E:* {d['de_ratio']} (< 1.2)\n"
+                      f">     └ _{d['de_desc']}_\n"
+                      f">   {'🟢' if d['c_peg'] else '🔴'} *PEG:* {d['peg_ratio']} (< 2.0)\n"
                       f">   {d['pe_color']} *P/E:* {round(d['pe_ratio'], 1)} (సెక్టార్: {d['sector_pe']})\n"
                       f">   {'🟢' if d['c_prom'] else '🔴'} *Promoter:* {d['promoter_holding']}%\n"
-                      f">   {d['pledge_text']}\n"
+                      f">     └ _{d['pledge_text']}_\n"
                       f"> {d['fii_line']}\n"
                       f"> {d['val_status']}\n\n"
                       f"🎯 *కొనుగోలు:* {d['buy_advice']}\n"
@@ -579,7 +574,7 @@ jobs:
 
                   chart_buf = generate_live_chart_image(d['df_daily'], sym)
                   send_telegram_photo(chart_buf, caption)
-                  time.sleep(4)  # టెలిగ్రామ్ రేట్ లిమిట్ రాకుండా 4 సెకన్ల విరామం
+                  time.sleep(4)
 
           if __name__ == "__main__":
               main()
