@@ -53,7 +53,7 @@ jobs:
           from datetime import datetime, timedelta
           from SmartApi import SmartConnect
 
-          # --- GitHub Secrets నుండి వివరాలు ---
+          # --- GitHub Secrets నుండి ఆధారాలు ---
           API_KEY = os.getenv("ANGEL_API_KEY")
           CLIENT_CODE = os.getenv("ANGEL_CLIENT_CODE")
           PIN = os.getenv("ANGEL_PIN")
@@ -133,8 +133,24 @@ jobs:
           def get_top_2000_stocks():
               print("ఏంజెల్ వన్ మాస్టర్ నుండి NSE స్టాక్స్ డౌన్‌లోడ్ అవుతున్నాయి...")
               master_url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-              res = requests.get(master_url, timeout=30)
-              master_data = res.json()
+              
+              # టైమౌట్ రాకుండా 90 సెకన్లు మరియు 4 సార్లు రీట్రై చేసే రక్షణ విధానం
+              master_data = None
+              for attempt in range(1, 5):
+                  try:
+                      print(f"మాస్టర్ డేటా డౌన్‌లోడ్ ప్రయత్నం {attempt}...")
+                      res = requests.get(master_url, timeout=90)
+                      if res.status_code == 200:
+                          master_data = res.json()
+                          print("మాస్టర్ ఫైల్ విజయవంతంగా డౌన్‌లోడ్ అయింది.")
+                          break
+                  except Exception as e:
+                      print(f"ప్రయత్నం {attempt} లోపం: {e}")
+                      time.sleep(5)
+
+              if not master_data:
+                  print("ఏంజెల్ వన్ నుండి స్టాక్స్ డేటా అందలేదు.")
+                  return []
 
               valid_stocks = []
               seen_symbols = set()
@@ -410,8 +426,11 @@ jobs:
               from_date_hourly = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d 09:15")
 
               stocks = get_top_2000_stocks()
-              results = []
+              if not stocks:
+                  send_telegram("⚠️ *స్క్రీనర్:* ఏంజెల్ వన్ నుండి స్టాక్స్ డేటా డౌన్‌లోడ్ కాలేదు.")
+                  return
 
+              results = []
               print("టాప్ 2000 4H & డైలీ బాటమ్ MACD స్కానింగ్ ప్రారంభమైంది...")
 
               for sym, token in stocks:
@@ -433,11 +452,7 @@ jobs:
                   send_telegram("📊 *బాటమ్ MACD స్క్రీనర్ అలర్ట్*\n\n_ఈరోజు 4H/డైలీ లో బాటమ్ MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు._")
                   return
 
-              # నాణ్యత ఆధారంగా సార్టింగ్ (అత్యుత్తమ స్టాక్ మొదటగా S.No.1 అవుతుంది):
-              # 1. Fundamental Score (6/6, 5/6...)
-              # 2. Fresh Bottom Reversal Crossover (4H లేదా 1D)
-              # 3. Volume Boost బలం
-              # 4. Valuation Discount %
+              # నాణ్యత ఆధారంగా సార్టింగ్ (అత్యుత్తమ స్టాక్ S.No.1 అవుతుంది):
               results.sort(
                   key=lambda x: (
                       x[1].get('score_val', 0),
@@ -448,7 +463,7 @@ jobs:
                   reverse=True
               )
 
-              # కేవలం మొదటి 10 అత్యుత్తమ ర్యాంక్ స్టాక్స్ మాత్రమే ఎంపిక
+              # అత్యుత్తమ టాప్ 10 స్టాక్స్ మాత్రమే ఎంపిక
               top_10_stocks = results[:10]
 
               today_str = datetime.now().strftime("%d-%m-%Y")
@@ -462,7 +477,7 @@ jobs:
               header_msg += "────────────────────"
               send_telegram(header_msg)
 
-              # మొదటి ర్యాంక్ (S.No.1) నుండి పదవ ర్యాంక్ (S.No.10) వరకు చార్ట్‌లు పంపడం
+              # ర్యాంక్ 1 నుండి ర్యాంక్ 10 వరకు చార్ట్ ఫోటోలు & పూర్తి విశ్లేషణ పంపడం
               for rank, (sym, d) in enumerate(top_10_stocks, 1):
                   investing_url = f"https://in.investing.com/search/?q={sym}"
                   tradingview_url = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
