@@ -27,7 +27,7 @@ jobs:
       - name: అవసరమైన పైథాన్ లైబ్రరీల ఇన్‌స్టాలేషన్
         run: |
           python -m pip install --upgrade pip
-          pip install smartapi-python pyotp pandas numpy requests yfinance matplotlib
+          pip install smartapi-python pyotp pandas numpy requests yfinance matplotlib logzero
 
       - name: బాటమ్ MACD స్క్రీనర్ రన్ చేయడం
         env:
@@ -213,7 +213,6 @@ jobs:
                       f"  {'🟢' if c_profit else '🔴'} *Profit Growth:* {'పాజిటివ్' if c_profit else 'నెగెటివ్'}"
                   )
 
-                  # ఎరుపు గుర్తు ఉన్నప్పుడు ఎందుకు కొనవచ్చో తెలియజేసే ప్రత్యేక వివరణ నోట్
                   risk_note = ""
                   if not c_profit:
                       risk_note = (
