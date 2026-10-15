@@ -1,0 +1,473 @@
+name: NSE టాప్ 2000 4H బాటమ్ MACD స్క్రీనర్
+
+on:
+  schedule:
+    # సోమవారం నుండి శుక్రవారం వరకు ప్రతిరోజూ రాత్రి 7:30 PM IST (14:00 UTC) కి రన్ అవుతుంది
+    - cron: '0 14 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: కోడ్ చెకౌట్
+        uses: actions/checkout@v4
+
+      - name: పైథాన్ 3.10 ఇన్‌స్టాలేషన్
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: చార్ట్ ఫాంట్స్ ఇన్‌స్టాలేషన్
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-lohit-telu fonts-deva
+
+      - name: అవసరమైన పైథాన్ లైబ్రరీల ఇన్‌స్టాలేషన్
+        run: |
+          python -m pip install --upgrade pip
+          pip install smartapi-python pyotp pandas numpy requests yfinance matplotlib
+
+      - name: బాటమ్ MACD స్క్రీనర్ రన్ చేయడం
+        env:
+          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
+          ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
+          ANGEL_TOTP_KEY: ${{ secrets.ANGEL_TOTP_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - << 'EOF'
+          import os
+          import io
+          import time
+          import requests
+          import pyotp
+          import numpy as np
+          import pandas as pd
+          import yfinance as yf
+          import matplotlib
+          matplotlib.use('Agg')
+          import matplotlib.pyplot as plt
+          from datetime import datetime, timedelta
+          from SmartApi import SmartConnect
+
+          # --- GitHub Secrets నుండి వివరాలు ---
+          API_KEY = os.getenv("ANGEL_API_KEY")
+          CLIENT_CODE = os.getenv("ANGEL_CLIENT_CODE")
+          PIN = os.getenv("ANGEL_PIN")
+          TOTP_KEY = os.getenv("ANGEL_TOTP_KEY")
+
+          BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+          CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+          FUNDAMENTAL_CRITERIA = {
+              "min_roe": 0.12,
+              "max_debt_to_equity": 1.2,
+              "max_peg": 2.0,
+              "min_promoter": 0.35,
+          }
+
+          SECTOR_PE_BENCHMARKS = {
+              "Technology": 28.0,
+              "Financial Services": 18.0,
+              "Healthcare": 32.0,
+              "Consumer Defensive": 42.0,
+              "Consumer Cyclical": 38.0,
+              "Energy": 14.0,
+              "Industrials": 32.0,
+              "Basic Materials": 16.0,
+              "Communication Services": 26.0,
+              "Utilities": 15.0,
+              "Real Estate": 25.0
+          }
+
+          def send_telegram(message):
+              if not BOT_TOKEN or not CHAT_ID:
+                  return
+              url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              max_len = 3800
+              chunks = [message[i:i+max_len] for i in range(0, len(message), max_len)]
+              for chunk in chunks:
+                  payload = {"chat_id": CHAT_ID, "text": chunk, "parse_mode": "Markdown"}
+                  try:
+                      res = requests.post(url, json=payload, timeout=25)
+                      if res.status_code != 200:
+                          payload_plain = {"chat_id": CHAT_ID, "text": chunk}
+                          requests.post(url, json=payload_plain, timeout=25)
+                  except Exception as e:
+                      print(f"టెలిగ్రామ్ ఎర్రర్: {e}")
+
+          def send_telegram_photo(photo_bytes, caption):
+              if not BOT_TOKEN or not CHAT_ID:
+                  return
+              url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+              files = {"photo": ("macd_chart.png", photo_bytes, "image/png")}
+              data = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "Markdown"}
+              try:
+                  requests.post(url, files=files, data=data, timeout=30)
+                  print("చార్ట్ ఫోటో పంపబడింది.")
+              except Exception as e:
+                  print(f"ఫోటో ఎర్రర్: {e}")
+
+          def get_angel_session():
+              if not all([API_KEY, CLIENT_CODE, PIN, TOTP_KEY]):
+                  print("ఏంజెల్ వన్ సీక్రెట్స్ GitHub లో సరిగ్గా కాన్ఫిగర్ కాలేదు.")
+                  return None
+              try:
+                  smart_api = SmartConnect(api_key=API_KEY)
+                  totp = pyotp.TOTP(TOTP_KEY).now()
+                  data = smart_api.generateSession(CLIENT_CODE, PIN, totp)
+                  if data and data.get('status'):
+                      print("ఏంజెల్ వన్ లాగిన్ విజయవంతమైంది.")
+                      return smart_api
+                  else:
+                      err = data.get('message') if data else 'నో రెస్పాన్స్'
+                      print(f"లాగిన్ విఫలమైంది: {err}")
+                      return None
+              except Exception as e:
+                  print(f"SmartAPI కనెక్ట్ లోపం: {e}")
+                  return None
+
+          def get_top_2000_stocks():
+              print("ఏంజెల్ వన్ మాస్టర్ నుండి NSE స్టాక్స్ డౌన్‌లోడ్ అవుతున్నాయి...")
+              master_url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+              res = requests.get(master_url, timeout=30)
+              master_data = res.json()
+
+              valid_stocks = []
+              seen_symbols = set()
+
+              for item in master_data:
+                  if item.get('exch_seg') == 'NSE' and item.get('symbol', '').endswith('-EQ'):
+                      sym = item['symbol'].replace('-EQ', '').strip()
+                      token = item['token']
+                      if sym not in seen_symbols and not sym.endswith('-BE') and not sym.endswith('-BZ'):
+                          seen_symbols.add(sym)
+                          valid_stocks.append((sym, token))
+
+              top_2000 = valid_stocks[:2000]
+              print(f"స్కాన్ కోసం సిద్ధంగా ఉన్న స్టాక్స్: {len(top_2000)}")
+              return top_2000
+
+          def analyze_fundamentals(symbol, current_price, ema20_price):
+              try:
+                  ticker = f"{symbol}.NS"
+                  stock = yf.Ticker(ticker)
+                  info = stock.info
+
+                  roe = info.get("returnOnEquity")
+                  debt_to_equity = info.get("debtToEquity")
+                  peg_ratio = info.get("pegRatio")
+                  pe_ratio = info.get("trailingPE")
+                  promoter_holding = info.get("heldPercentInsiders")
+                  fii_holding = info.get("heldPercentInstitutions")
+                  profit_growth = info.get("earningsGrowth")
+                  free_cash_flow = info.get("freeCashflow")
+                  sector = info.get("sector", "General")
+
+                  de_ratio = (debt_to_equity / 100.0) if debt_to_equity is not None else None
+                  sector_pe = SECTOR_PE_BENCHMARKS.get(sector, 24.0)
+
+                  if not pe_ratio or pe_ratio <= 0 or not sector_pe:
+                      return None
+
+                  is_pe_discounted = (pe_ratio < sector_pe)
+                  pe_color = "🟢" if is_pe_discounted else "🔴"
+
+                  if not is_pe_discounted:
+                      return None
+
+                  pe_diff = round(((sector_pe - pe_ratio) / sector_pe) * 100, 1)
+                  valuation_status = f"🟢 *డిస్కౌంట్ లో దొరుకుతుంది ({pe_diff}% చౌక)*"
+                  buy_recommendation = f"ప్రస్తుత ధర వద్ద: ₹{current_price} (సపోర్ట్: ₹{ema20_price})"
+
+                  fii_color = "🟢"
+                  try:
+                      inst_holders = stock.institutional_holders
+                      if inst_holders is not None and not inst_holders.empty and '% Out' in inst_holders.columns:
+                          latest_pct = inst_holders['% Out'].dropna().values
+                          if len(latest_pct) >= 2 and latest_pct[0] < latest_pct[1]:
+                              fii_color = "🔴"
+                      elif fii_holding is not None and fii_holding < 0.10:
+                          fii_color = "🔴"
+                  except Exception:
+                      fii_color = "🟢" if (fii_holding and fii_holding >= 0.12) else "🔴"
+
+                  c_roe = (roe is not None and roe >= FUNDAMENTAL_CRITERIA["min_roe"])
+                  c_de = (de_ratio is not None and de_ratio <= FUNDAMENTAL_CRITERIA["max_debt_to_equity"])
+                  c_peg = (peg_ratio is not None and 0 < peg_ratio <= FUNDAMENTAL_CRITERIA["max_peg"])
+                  c_prom = (promoter_holding is not None and promoter_holding >= FUNDAMENTAL_CRITERIA["min_promoter"])
+                  c_profit = (profit_growth is not None and profit_growth > 0)
+                  c_fcf = (free_cash_flow is not None and free_cash_flow > 0)
+
+                  score = sum([c_roe, c_de, c_peg, c_prom, c_profit, c_fcf])
+
+                  details = (
+                      f"  {'🟢' if c_roe else '🔴'} *ROE:* {round(roe * 100, 1) if roe else 'N/A'}% (> 12%)\n"
+                      f"  {'🟢' if c_de else '🔴'} *D/E:* {round(de_ratio, 2) if de_ratio else 'N/A'} (< 1.2)\n"
+                      f"  {'🟢' if c_peg else '🔴'} *PEG:* {round(peg_ratio, 2) if peg_ratio else 'N/A'} (< 2.0)\n"
+                      f"  {'🟢' if c_prom else '🔴'} *Promoter:* {round(promoter_holding * 100, 1) if promoter_holding else 'N/A'}% (> 35%)\n"
+                      f"  {'🟢' if c_fcf else '🔴'} *Free Cash Flow:* {'పాజిటివ్' if c_fcf else 'నెగెటివ్'}\n"
+                      f"  {'🟢' if c_profit else '🔴'} *Profit Growth:* {'పాజిటివ్' if c_profit else 'నెగెటివ్'}"
+                  )
+
+                  # ఎరుపు గుర్తు ఉన్నప్పుడు ఎందుకు కొనవచ్చో తెలియజేసే ప్రత్యేక వివరణ నోట్
+                  risk_note = ""
+                  if not c_profit:
+                      risk_note = (
+                          "────────────────────\n"
+                          "ℹ️ *🔴 నెగెటివ్ ప్రాఫిట్ గ్రోత్ ఉన్నా ఎందుకు కొనవచ్చు:*\n"
+                          "• కంపెనీకి అప్పుల భారం లేదు (D/E < 1.2) & క్యాష్ ఫ్లో బలంగా ఉంది.\n"
+                          "• లాభాలు తగ్గడం వల్లనే షేరు డిస్కౌంట్ ధరకు లభిస్తోంది.\n"
+                          "• 4H బాటమ్ MACD రివర్సల్ ఉన్నందున సపోర్ట్ వద్ద ఎంట్రీ పరిశీలించవచ్చు.\n"
+                      )
+
+                  fii_text = f"{round(fii_holding * 100, 1)}%" if fii_holding is not None else "N/A"
+
+                  return {
+                      "is_discounted": True,
+                      "score_val": score,
+                      "score_text": f"{score}/6",
+                      "fund_details": details,
+                      "risk_note": risk_note,
+                      "fii_line": f"{fii_color} *FII హోల్డింగ్:* {fii_text}",
+                      "pe_line": f"{pe_color} *P/E:* స్టాక్ {round(pe_ratio, 1)} vs సెక్టార్ {sector_pe}",
+                      "val_status": valuation_status,
+                      "buy_advice": buy_recommendation
+                  }
+              except Exception:
+                  return None
+
+          def get_color_coded_macd(series, fast=12, slow=26, signal_span=9):
+              exp12 = series.ewm(span=fast, adjust=False).mean()
+              exp26 = series.ewm(span=slow, adjust=False).mean()
+              macd = exp12 - exp26
+              signal = macd.ewm(span=signal_span, adjust=False).mean()
+
+              if len(macd) < 3:
+                  return "⚪ డేటా లేదు", False, False
+
+              curr_m = round(macd.iloc[-1], 2)
+              curr_s = round(signal.iloc[-1], 2)
+              prev_m = round(macd.iloc[-2], 2)
+              prev_s = round(signal.iloc[-2], 2)
+
+              gap = round(curr_m - curr_s, 2)
+              abs_gap = abs(gap)
+              is_below_zero = (curr_m < 0.0)
+
+              is_crossed = (curr_m > curr_s)
+              is_fresh = (prev_m <= prev_s) and is_crossed and is_below_zero
+
+              if is_crossed:
+                  color_text = "🟢 క్రాస్ అయ్యింది"
+              elif abs_gap <= 0.06 or (abs(curr_s) > 0 and (abs_gap / abs(curr_s)) <= 0.02):
+                  color_text = "⚫ ఇప్పుడే కలిసాయి"
+              elif abs_gap <= 0.35 or (abs(curr_s) > 0 and (abs_gap / abs(curr_s)) <= 0.08):
+                  color_text = "🔵 ఇంకాస్త దగ్గరగా ఉన్నది"
+              elif abs_gap <= 0.90 or (abs(curr_s) > 0 and (abs_gap / abs(curr_s)) <= 0.22):
+                  color_text = "🟡 క్రాస్ కావడానికి దగ్గరగా ఉన్నది"
+              else:
+                  color_text = "🔴 ఇంకా దూరంగా ఉంది"
+
+              return color_text, is_fresh, is_crossed
+
+          def generate_live_chart_image(df_d, sym):
+              df_plot = df_d.iloc[-70:].copy()
+
+              exp12 = df_plot['close'].ewm(span=12, adjust=False).mean()
+              exp26 = df_plot['close'].ewm(span=26, adjust=False).mean()
+              macd = exp12 - exp26
+              signal = macd.ewm(span=9, adjust=False).mean()
+              hist = macd - signal
+
+              fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 6), gridspec_kw={'height_ratios': [2, 1.2]}, sharex=True)
+              plt.subplots_adjust(hspace=0.08)
+
+              ax1.plot(df_plot.index, df_plot['close'], color='#007acc', linewidth=1.8, label='Price')
+              ax1.plot(df_plot.index, df_plot['close'].ewm(span=20).mean(), color='#e67e22', linestyle='--', linewidth=1.2, label='20 EMA')
+              ax1.set_title(f"{sym} - Bottom Reversal & MACD Chart", fontsize=12, fontweight='bold', pad=10)
+              ax1.grid(True, linestyle=':', alpha=0.6)
+              ax1.legend(loc='upper left', fontsize=9)
+
+              ax2.plot(df_plot.index, macd, color='#1e88e5', linewidth=2.0, label='MACD Line (Blue)')
+              ax2.plot(df_plot.index, signal, color='#e53935', linewidth=1.6, label='Signal Line (Red)')
+
+              colors = ['#26a69a' if h >= 0 else '#ef5350' for h in hist]
+              ax2.bar(df_plot.index, hist, color=colors, alpha=0.5, width=0.8)
+
+              ax2.axhline(0.0, color='black', linestyle='--', linewidth=1.2, alpha=0.8, label='Zero Line (0.00)')
+              ax2.grid(True, linestyle=':', alpha=0.6)
+              ax2.legend(loc='lower left', fontsize=8)
+
+              curr_m = round(macd.iloc[-1], 2)
+              curr_s = round(signal.iloc[-1], 2)
+              diff = round(curr_m - curr_s, 2)
+              gap_text = f"Gap: +{diff}" if diff >= 0 else f"Gap: {diff}"
+              ax2.set_ylabel(f"MACD ({curr_m}/{curr_s})\n{gap_text}", fontsize=8)
+
+              buf = io.BytesIO()
+              plt.savefig(buf, format='png', dpi=120, bbox_inches='tight')
+              plt.close(fig)
+              buf.seek(0)
+              return buf
+
+          def analyze_stock_full(smart_api, token, from_date_daily, from_date_hourly, to_date):
+              param_daily = {
+                  "exchange": "NSE",
+                  "symboltoken": str(token),
+                  "interval": "ONE_DAY",
+                  "fromdate": from_date_daily,
+                  "todate": to_date
+              }
+              res_d = smart_api.getCandleData(param_daily)
+              if not res_d or not res_d.get('status') or not res_d.get('data') or len(res_d['data']) < 220:
+                  return None
+
+              df_d = pd.DataFrame(res_d['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+              df_d['date'] = pd.to_datetime(df_d['date'])
+              df_d.set_index('date', inplace=True)
+              df_d['close'] = df_d['close'].astype(float)
+              df_d['open'] = df_d['open'].astype(float)
+              df_d['volume'] = df_d['volume'].astype(float)
+
+              curr_close = df_d['close'].iloc[-1]
+              curr_open = df_d['open'].iloc[-1]
+              curr_vol = df_d['volume'].iloc[-1]
+
+              if curr_close < curr_open:
+                  return None
+
+              vol20_avg = df_d['volume'].iloc[-21:-1].mean()
+              vol_boost = round(curr_vol / max(vol20_avg, 1), 2)
+              if vol_boost < 1.1:
+                  return None
+
+              stat_1d, d_fresh, d_bull = get_color_coded_macd(df_d['close'])
+
+              # 4-గంటల MACD గణన
+              param_hourly = {
+                  "exchange": "NSE",
+                  "symboltoken": str(token),
+                  "interval": "ONE_HOUR",
+                  "fromdate": from_date_hourly,
+                  "todate": to_date
+              }
+              res_h = smart_api.getCandleData(param_hourly)
+              stat_4h = "⚪ డేటా లేదు"
+              h4_fresh, h4_bull = False, False
+
+              if res_h and res_h.get('status') and res_h.get('data') and len(res_h['data']) > 40:
+                  df_h = pd.DataFrame(res_h['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                  df_h['date'] = pd.to_datetime(df_h['date'])
+                  df_h.set_index('date', inplace=True)
+                  df_h['close'] = df_h['close'].astype(float)
+                  df_4h = df_h['close'].resample('4h').last().dropna()
+                  stat_4h, h4_fresh, h4_bull = get_color_coded_macd(df_4h)
+
+              if "🔴" in stat_4h and "🔴" in stat_1d:
+                  return None
+
+              df_w = df_d['close'].resample('W-FRI').last().dropna()
+              stat_1w, _, _ = get_color_coded_macd(df_w)
+
+              df_m = df_d['close'].resample('ME').last().dropna()
+              stat_1m, _, _ = get_color_coded_macd(df_m)
+
+              ema20 = df_d['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+
+              return {
+                  "price": round(curr_close, 2),
+                  "vol_boost": vol_boost,
+                  "ema20": round(ema20, 2),
+                  "stat_4h": stat_4h,
+                  "stat_1d": stat_1d,
+                  "stat_1w": stat_1w,
+                  "stat_1m": stat_1m,
+                  "is_4h_fresh": h4_fresh,
+                  "is_daily_fresh": d_fresh,
+                  "df_daily": df_d
+              }
+
+          def main():
+              smart_api = get_angel_session()
+              if not smart_api:
+                  send_telegram("⚠️ *స్క్రీనర్:* ఏంజెల్ వన్ లాగిన్ విఫలమైంది. GitHub Secrets తనిఖీ చేయండి.")
+                  return
+
+              to_date = datetime.now().strftime("%Y-%m-%d 15:30")
+              from_date_daily = (datetime.now() - timedelta(days=1400)).strftime("%Y-%m-%d 09:15")
+              from_date_hourly = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d 09:15")
+
+              stocks = get_top_2000_stocks()
+              results = []
+
+              print("టాప్ 2000 4H & డైలీ బాటమ్ MACD స్కానింగ్ ప్రారంభమైంది...")
+
+              for sym, token in stocks:
+                  try:
+                      time.sleep(0.45)
+                      tech_res = analyze_stock_full(smart_api, token, from_date_daily, from_date_hourly, to_date)
+                      
+                      if tech_res:
+                          fund_res = analyze_fundamentals(sym, tech_res["price"], tech_res["ema20"])
+                          
+                          if fund_res and fund_res.get("is_discounted"):
+                              print(f"🎯 ఎంట్రీ స్టాక్ దొరికింది: {sym}")
+                              combined = {**tech_res, **fund_res}
+                              results.append((sym, combined))
+                  except Exception:
+                      continue
+
+              if not results:
+                  send_telegram("📊 *బాటమ్ MACD స్క్రీనర్ అలర్ట్*\n\n_ఈరోజు 4H/డైలీ లో బాటమ్ MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు._")
+                  return
+
+              results.sort(key=lambda x: (x[1]['is_4h_fresh'] or x[1]['is_daily_fresh'], x[1]['vol_boost']), reverse=True)
+
+              today_str = datetime.now().strftime("%d-%m-%Y")
+              header_msg = (
+                  f"📉➡️📈 *NSE టాప్ 2000 4H బాటమ్ MACD అలర్ట్స్ ({today_str})*\n"
+                  f"💡 *వరుస క్రమం:* 4H ➔ 1D ➔ 1W ➔ 1M.\n"
+                  f"────────────────────"
+              )
+              send_telegram(header_msg)
+
+              for sym, d in results[:5]:
+                  investing_url = f"https://in.investing.com/search/?q={sym}"
+                  tradingview_url = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
+
+                  is_high_conviction = (d.get('score_val', 0) >= 5) and (d['is_4h_fresh'] or d['is_daily_fresh'])
+                  conviction_tag = "🌟 *హై-కన్విక్షన్ బాటమ్ సెటప్*\n" if is_high_conviction else ""
+
+                  caption = (
+                      f"🔥 *{sym}* — ₹{d['price']}\n"
+                      f"{conviction_tag}"
+                      f"• 💰 *వాల్యూమ్:* *{d['vol_boost']}x*\n"
+                      f"────────────────────\n"
+                      f"📊 *MACD 2-లైన్ల స్థితి:*\n"
+                      f"⏱️ *4H :* {d['stat_4h']}\n"
+                      f"☀️ *1D :* {d['stat_1d']}\n"
+                      f"📅 *1W :* {d['stat_1w']}\n"
+                      f"🌕 *1M :* {d['stat_1m']}\n"
+                      f"────────────────────\n"
+                      f"• 📈 *Fundamental Score: {d['score_text']}*\n"
+                      f"{d['fund_details']}\n"
+                      f"────────────────────\n"
+                      f"{d['fii_line']}\n"
+                      f"{d['pe_line']}\n"
+                      f"{d['val_status']}\n"
+                      f"🎯 *కొనుగోలు:* {d['buy_advice']}\n"
+                      f"{d['risk_note']}"
+                      f"• 🔗 [Investing India లో చూడండి]({investing_url}) | [TradingView]({tradingview_url})"
+                  )
+
+                  chart_buf = generate_live_chart_image(d['df_daily'], sym)
+                  send_telegram_photo(chart_buf, caption)
+                  time.sleep(1)
+
+          if __name__ == "__main__":
+              main()
+          EOF
