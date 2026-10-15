@@ -90,6 +90,49 @@ jobs:
               "Real Estate": 25.0
           }
 
+          smart_api = None
+
+          def get_angel_session():
+              global smart_api
+              if not all([API_KEY, CLIENT_CODE, PIN, TOTP_KEY]):
+                  print("ఏంజెల్ వన్ సీక్రెట్స్ GitHub లో సరిగ్గా కాన్ఫిగర్ కాలేదు.")
+                  return None
+              try:
+                  smart_api = SmartConnect(api_key=API_KEY)
+                  totp = pyotp.TOTP(TOTP_KEY).now()
+                  data = smart_api.generateSession(CLIENT_CODE, PIN, totp)
+                  if data and data.get('status'):
+                      print("ఏంజెల్ వన్ లాగిన్ విజయవంతమైంది.")
+                      return smart_api
+                  else:
+                      err = data.get('message') if data else 'నో రెస్పాన్స్'
+                      print(f"లాగిన్ విఫలమైంది: {err}")
+                      return None
+              except Exception as e:
+                  print(f"SmartAPI కనెక్ట్ లోపం: {e}")
+                  return None
+
+          def get_candle_data_with_retry(params):
+              """AG8001 / Invalid Token వస్తే ఆటోమేటిక్‌గా రీ-లాగిన్ అయ్యి డేటా తెస్తుంది"""
+              global smart_api
+              if not smart_api:
+                  smart_api = get_angel_session()
+
+              for attempt in range(2):
+                  try:
+                      res = smart_api.getCandleData(params)
+                      if res and isinstance(res, dict) and res.get('errorCode') == 'AG8001':
+                          print("⚠️ ఏంజెల్ టోకెన్ ఎక్స్‌పైర్ అయింది. రీ-లాగిన్ జరుగుతోంది...")
+                          smart_api = get_angel_session()
+                          time.sleep(1)
+                          continue
+                      return res
+                  except Exception as e:
+                      print(f"క్యాండిల్ డేటా రిక్వెస్ట్ లోపం: {e}")
+                      smart_api = get_angel_session()
+                      time.sleep(1)
+              return None
+
           def send_email_digest(subject, html_content, charts_dict):
               if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
                   print("ఈమెయిల్ క్రెడెన్షియల్స్ సరిగ్గా లేవు.")
@@ -116,25 +159,6 @@ jobs:
                   print("✅ ఈమెయిల్ విజయవంతంగా పంపబడింది!")
               except Exception as e:
                   print(f"❌ ఈమెయిల్ లోపం: {e}")
-
-          def get_angel_session():
-              if not all([API_KEY, CLIENT_CODE, PIN, TOTP_KEY]):
-                  print("ఏంజెల్ వన్ సీక్రెట్స్ GitHub లో సరిగ్గా కాన్ఫిగర్ కాలేదు.")
-                  return None
-              try:
-                  smart_api = SmartConnect(api_key=API_KEY)
-                  totp = pyotp.TOTP(TOTP_KEY).now()
-                  data = smart_api.generateSession(CLIENT_CODE, PIN, totp)
-                  if data and data.get('status'):
-                      print("ఏంజెల్ వన్ లాగిన్ విజయవంతమైంది.")
-                      return smart_api
-                  else:
-                      err = data.get('message') if data else 'నో రెస్పాన్స్'
-                      print(f"లాగిన్ విఫలమైంది: {err}")
-                      return None
-              except Exception as e:
-                  print(f"SmartAPI కనెక్ట్ లోపం: {e}")
-                  return None
 
           def get_top_2000_stocks():
               print("ఏంజెల్ వన్ మాస్టర్ నుండి NSE స్టాక్స్ డౌన్‌లోడ్ అవుతున్నాయి...")
@@ -203,7 +227,6 @@ jobs:
                       if name_elem and val_elem:
                           ratios[name_elem.text.strip()] = val_elem.text.strip()
 
-                  # ROE విశ్లేషణను మెరుగుపరచడం
                   roe_raw = ratios.get('ROE') or ratios.get('Return on equity')
                   if not roe_raw:
                       for li in soup.find_all('li'):
@@ -276,7 +299,7 @@ jobs:
                       return None
 
                   pe_diff = round(((sector_pe - pe_ratio) / sector_pe) * 100, 1)
-                  valuation_status = f"🟢 *డిస్కౌంట్ లో దొరుకుతుంది ({pe_diff}% చౌక)*"
+                  valuation_status = f"🟢 <b>డిస్కౌంట్ లో దొరుకుతుంది ({pe_diff}% చౌక)</b>"
                   buy_recommendation = f"ప్రస్తుత ధర వద్ద: ₹{current_price} (సపోర్ట్: ₹{ema20_price})"
 
                   fii_color = "🟢" if (fii_holding and fii_holding >= 10.0) else "🔴"
@@ -300,18 +323,19 @@ jobs:
                   promoter_desc = f"కంపెనీ యజమానుల వద్దే {promoter_holding}% వాటా ఉంది" if promoter_holding else "యజమానుల వాటా వివరాలు లేవు"
 
                   if promoter_pledge > 0:
-                      pledge_text = f"⚠️ *తాకట్టు:* {promoter_pledge}% షేర్లు తాకట్టులో ఉన్నాయి"
+                      pledge_text = f"⚠️ <b>తాకట్టు:</b> {promoter_pledge}% షేర్లు తాకట్టులో ఉన్నాయి"
                   else:
-                      pledge_text = "🔒 *తాకట్టు:* 0.0% (ఒక్క షేరు కూడా తాకట్టు పెట్టలేదు, చాలా సురక్షితం)"
+                      pledge_text = "🔒 <b>తాకట్టు:</b> 0.0% (ఒక్క షేరు కూడా తాకట్టు పెట్టలేదు, చాలా సురక్షితం)"
 
                   risk_note = ""
                   if not c_profit:
                       risk_note = (
-                          "────────────────────\n"
-                          "ℹ️ *🔴 నెగెటివ్ ప్రాఫిట్ గ్రోత్ ఉన్నా ఎందుకు కొనవచ్చు:*\n"
-                          "• కంపెనీకి అప్పుల భారం లేదు (D/E < 1.2) & క్యాష్ ఫ్లో బలంగా ఉంది.\n"
-                          "• లాభాలు తగ్గడం వల్లనే షేరు డిస్కౌంట్ ధరకు లభిస్తోంది.\n"
-                          "• 4H బాటమ్ MACD రివర్సల్ ఉన్నందున సపోర్ట్ వద్ద ఎంట్రీ పరిశీలించవచ్చు.\n"
+                          "<div style='background-color: #fce8e6; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 13px;'>"
+                          "<b>ℹ️ 🔴 నెగెటివ్ ప్రాఫిట్ గ్రోత్ ఉన్నా ఎందుకు కొనవచ్చు:</b><br>"
+                          "• కంపెనీకి అప్పుల భారం లేదు (D/E &lt; 1.2) &amp; క్యాష్ ఫ్లో బలంగా ఉంది.<br>"
+                          "• లాభాలు తగ్గడం వల్లనే షేరు డిస్కౌంట్ ధరకు లభిస్తోంది.<br>"
+                          "• 4H బాటమ్ MACD రివర్సల్ ఉన్నందున సపోర్ట్ వద్ద ఎంట్రీ పరిశీలించవచ్చు."
+                          "</div>"
                       )
 
                   return {
@@ -341,7 +365,7 @@ jobs:
                       "promoter_desc": promoter_desc,
                       "pledge_text": pledge_text,
                       "risk_note": risk_note,
-                      "fii_line": f"🔴 *FII హోల్డింగ్:* {fii_text}" if fii_color == "🔴" else f"🟢 *FII హోల్డింగ్:* {fii_text}",
+                      "fii_line": f"🔴 <b>FII హోల్డింగ్:</b> {fii_text}" if fii_color == "🔴" else f"🟢 <b>FII హోల్డింగ్:</b> {fii_text}",
                       "val_status": valuation_status,
                       "buy_advice": buy_recommendation,
                       "business_model": biz_info
@@ -423,7 +447,7 @@ jobs:
               buf.seek(0)
               return buf
 
-          def analyze_stock_full(smart_api, token, from_date_daily, from_date_hourly, to_date):
+          def analyze_stock_full(token, from_date_daily, from_date_hourly, to_date):
               param_daily = {
                   "exchange": "NSE",
                   "symboltoken": str(token),
@@ -431,10 +455,7 @@ jobs:
                   "fromdate": from_date_daily,
                   "todate": to_date
               }
-              try:
-                  res_d = smart_api.getCandleData(param_daily)
-              except Exception:
-                  return None
+              res_d = get_candle_data_with_retry(param_daily)
 
               if not res_d or not res_d.get('status') or not res_d.get('data') or len(res_d['data']) < 220:
                   return None
@@ -473,10 +494,7 @@ jobs:
                   "fromdate": from_date_hourly,
                   "todate": to_date
               }
-              try:
-                  res_h = smart_api.getCandleData(param_hourly)
-              except Exception:
-                  res_h = None
+              res_h = get_candle_data_with_retry(param_hourly)
 
               stat_4h = "⚪ డేటా లేదు"
               h4_fresh, h4_bull = False, False
@@ -514,6 +532,7 @@ jobs:
               }
 
           def main():
+              global smart_api
               smart_api = get_angel_session()
               if not smart_api:
                   send_email_digest("NSE TOP 2000 - ఎర్రర్ అలర్ట్", "<h3>⚠️ ఏంజెల్ వన్ లాగిన్ విఫలమైంది. GitHub Secrets తనిఖీ చేయండి.</h3>", {})
@@ -534,7 +553,7 @@ jobs:
               for sym, token in stocks:
                   try:
                       time.sleep(0.40)
-                      tech_res = analyze_stock_full(smart_api, token, from_date_daily, from_date_hourly, to_date)
+                      tech_res = analyze_stock_full(token, from_date_daily, from_date_hourly, to_date)
                       
                       if tech_res:
                           fund_res = analyze_fundamentals(sym, tech_res["price"], tech_res["ema20"])
@@ -595,17 +614,6 @@ jobs:
                   is_high_conviction = (d.get('score_val', 0) >= 5) and (d['is_4h_fresh'] or d['is_daily_fresh'])
                   conviction_tag = "<div style='color: #d93025; font-weight: bold; margin-bottom: 8px;'>🌟 హై-కన్విక్షన్ బాటమ్ సెటప్</div>" if is_high_conviction else ""
 
-                  risk_html = ""
-                  if not d['c_profit']:
-                      risk_html = """
-                      <div style="background-color: #fce8e6; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 13px;">
-                          <b>ℹ️ 🔴 నెగెటివ్ ప్రాఫిట్ గ్రోత్ ఉన్నా ఎందుకు కొనవచ్చు:</b><br>
-                          • కంపెనీకి అప్పుల భారం లేదు (D/E &lt; 1.2) &amp; క్యాష్ ఫ్లో బలంగా ఉంది.<br>
-                          • లాభాలు తగ్గడం వల్లనే షేరు డిస్కౌంట్ ధరకు లభిస్తోంది.<br>
-                          • 4H బాటమ్ MACD రివర్సల్ ఉన్నందున సపోర్ట్ వద్ద ఎంట్రీ పరిశీలించవచ్చు.
-                      </div>
-                      """
-
                   cards_html += f"""
                   <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 18px; margin-bottom: 30px; background-color: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
                       <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 12px;">
@@ -650,7 +658,7 @@ jobs:
                           🎯 <b>కొనుగోలు:</b> {d['buy_advice']}<br>
                           🏢 <b>వ్యాపారం (Business):</b> {d['business_model']}
                       </div>
-                      {risk_html}
+                      {d['risk_note']}
                   </div>
                   """
 
