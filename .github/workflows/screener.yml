@@ -228,6 +228,7 @@ jobs:
                   return {
                       "is_discounted": True,
                       "score_val": score,
+                      "pe_diff": pe_diff,
                       "score_text": f"{score}/6",
                       "fund_details": details,
                       "risk_note": risk_note,
@@ -321,7 +322,11 @@ jobs:
                   "fromdate": from_date_daily,
                   "todate": to_date
               }
-              res_d = smart_api.getCandleData(param_daily)
+              try:
+                  res_d = smart_api.getCandleData(param_daily)
+              except Exception:
+                  return None
+
               if not res_d or not res_d.get('status') or not res_d.get('data') or len(res_d['data']) < 220:
                   return None
 
@@ -354,7 +359,11 @@ jobs:
                   "fromdate": from_date_hourly,
                   "todate": to_date
               }
-              res_h = smart_api.getCandleData(param_hourly)
+              try:
+                  res_h = smart_api.getCandleData(param_hourly)
+              except Exception:
+                  res_h = None
+
               stat_4h = "⚪ డేటా లేదు"
               h4_fresh, h4_bull = False, False
 
@@ -407,7 +416,7 @@ jobs:
 
               for sym, token in stocks:
                   try:
-                      time.sleep(0.45)
+                      time.sleep(0.40)
                       tech_res = analyze_stock_full(smart_api, token, from_date_daily, from_date_hourly, to_date)
                       
                       if tech_res:
@@ -424,17 +433,37 @@ jobs:
                   send_telegram("📊 *బాటమ్ MACD స్క్రీనర్ అలర్ట్*\n\n_ఈరోజు 4H/డైలీ లో బాటమ్ MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు._")
                   return
 
-              results.sort(key=lambda x: (x[1]['is_4h_fresh'] or x[1]['is_daily_fresh'], x[1]['vol_boost']), reverse=True)
+              # నాణ్యత ఆధారంగా సార్టింగ్ (అత్యుత్తమ స్టాక్ మొదటగా S.No.1 అవుతుంది):
+              # 1. Fundamental Score (6/6, 5/6...)
+              # 2. Fresh Bottom Reversal Crossover (4H లేదా 1D)
+              # 3. Volume Boost బలం
+              # 4. Valuation Discount %
+              results.sort(
+                  key=lambda x: (
+                      x[1].get('score_val', 0),
+                      1 if (x[1]['is_4h_fresh'] or x[1]['is_daily_fresh']) else 0,
+                      x[1]['vol_boost'],
+                      x[1].get('pe_diff', 0)
+                  ),
+                  reverse=True
+              )
+
+              # కేవలం మొదటి 10 అత్యుత్తమ ర్యాంక్ స్టాక్స్ మాత్రమే ఎంపిక
+              top_10_stocks = results[:10]
 
               today_str = datetime.now().strftime("%d-%m-%Y")
               header_msg = (
                   f"📉➡️📈 *NSE టాప్ 2000 4H బాటమ్ MACD అలర్ట్స్ ({today_str})*\n"
-                  f"💡 *వరుస క్రమం:* 4H ➔ 1D ➔ 1W ➔ 1M.\n"
-                  f"────────────────────"
+                  f"🏆 *నాణ్యత ఆధారంగా టాప్ 10 ర్యాంకుల జాబితా:*\n"
+                  f"────────────────────\n"
               )
+              for r, (s, d) in enumerate(top_10_stocks, 1):
+                  header_msg += f"*{r}. {s}* — ₹{d['price']} (స్కోర్: {d['score_text']})\n"
+              header_msg += "────────────────────"
               send_telegram(header_msg)
 
-              for sym, d in results[:5]:
+              # మొదటి ర్యాంక్ (S.No.1) నుండి పదవ ర్యాంక్ (S.No.10) వరకు చార్ట్‌లు పంపడం
+              for rank, (sym, d) in enumerate(top_10_stocks, 1):
                   investing_url = f"https://in.investing.com/search/?q={sym}"
                   tradingview_url = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
 
@@ -442,7 +471,7 @@ jobs:
                   conviction_tag = "🌟 *హై-కన్విక్షన్ బాటమ్ సెటప్*\n" if is_high_conviction else ""
 
                   caption = (
-                      f"🔥 *{sym}* — ₹{d['price']}\n"
+                      f"🏆 *ర్యాంక్: S.No.{rank}* | 🔥 *{sym}* — ₹{d['price']}\n"
                       f"{conviction_tag}"
                       f"• 💰 *వాల్యూమ్:* *{d['vol_boost']}x*\n"
                       f"────────────────────\n"
@@ -465,7 +494,7 @@ jobs:
 
                   chart_buf = generate_live_chart_image(d['df_daily'], sym)
                   send_telegram_photo(chart_buf, caption)
-                  time.sleep(1)
+                  time.sleep(2)
 
           if __name__ == "__main__":
               main()
