@@ -1,0 +1,1 @@
+# 4H-1D-1W-1M-MACD-Crossover
