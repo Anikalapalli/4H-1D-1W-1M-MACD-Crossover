@@ -1,392 +1,420 @@
-import os
-import io
-import time
-import requests
-import pyotp
-import numpy as np
-import pandas as pd
-import yfinance as yf
-from datetime import datetime, timedelta
-from SmartApi import SmartConnect
+name: NSE వైకాఫ్ & ఆల్ఫా లీడర్ స్క్రీనర్
 
-# ఏంజెల్ వన్ & టెలిగ్రామ్ ఆధారాలు
-API_KEY = os.getenv("ANGEL_API_KEY", "QVDAAb9M")
-CLIENT_CODE = os.getenv("ANGEL_CLIENT_CODE", "J92644")
-PIN = os.getenv("ANGEL_PIN", "0786")
-TOTP_KEY = os.getenv("ANGEL_TOTP_KEY", "6MRVJ72DNHZR5AMQN3G4RFCVSU")
+on:
+  schedule:
+    # సోమవారం నుండి శుక్రవారం వరకు ప్రతిరోజూ సాయంత్రం 6:00 PM IST (12:30 UTC) కి రన్ అవుతుంది
+    - cron: '30 12 * * 1-5'
+  workflow_dispatch:
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8928260274:AAHu2uLsWLDa3FsNfEw-bjRkD9M2A-I6YH0")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1376250638")
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
 
-# ఫండమెంటల్ ప్రమాణాల పరిమితులు
-FUNDAMENTAL_CRITERIA = {
-    "min_roe": 0.12,            # ROE కనీసం 12%
-    "max_debt_to_equity": 1.2,  # డెట్ టు ఈక్విటీ 1.2 లోపు
-    "max_peg": 2.0,             # PEG నిష్పత్తి 2.0 లోపు
-    "min_promoter": 0.35,       # ప్రమోటర్ వాటా కనీసం 35%
-}
+    steps:
+      - name: కోడ్ చెకౌట్
+        uses: actions/checkout@v4
 
-# భారత మార్కెట్ సెక్టార్ల సగటు బెంచ్‌మార్క్ P/E నిష్పత్తులు
-SECTOR_PE_BENCHMARKS = {
-    "Technology": 28.0,
-    "Financial Services": 18.0,
-    "Healthcare": 32.0,
-    "Consumer Defensive": 42.0,
-    "Consumer Cyclical": 38.0,
-    "Energy": 14.0,
-    "Industrials": 32.0,
-    "Basic Materials": 16.0,
-    "Communication Services": 26.0,
-    "Utilities": 15.0,
-    "Real Estate": 25.0
-}
+      - name: పైథాన్ 3.10 ఇన్‌స్టాలేషన్
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-def send_telegram(message):
-    if not BOT_TOKEN or not CHAT_ID:
-        print("టెలిగ్రామ్ వివరాలు లేవు.")
-        return
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    max_len = 3800
-    chunks = [message[i:i+max_len] for i in range(0, len(message), max_len)]
-    for chunk in chunks:
-        payload = {"chat_id": CHAT_ID, "text": chunk, "parse_mode": "Markdown"}
-        try:
-            res = requests.post(url, json=payload, timeout=25)
-            if res.status_code != 200:
-                payload_plain = {"chat_id": CHAT_ID, "text": chunk}
-                requests.post(url, json=payload_plain, timeout=25)
-            print("టెలిగ్రామ్ అలర్ట్ పంపబడింది.")
-        except Exception as e:
-            print(f"టెలిగ్రామ్ ఎర్రర్: {e}")
+      - name: అవసరమైన లైబ్రరీల ఇన్‌స్టాలేషన్
+        run: |
+          python -m pip install --upgrade pip
+          pip install smartapi-python pyotp pandas numpy requests yfinance logzero websocket-client
 
-def get_angel_session():
-    try:
-        smart_api = SmartConnect(api_key=API_KEY)
-        totp = pyotp.TOTP(TOTP_KEY).now()
-        data = smart_api.generateSession(CLIENT_CODE, PIN, totp)
-        if data and data.get('status'):
-            print("ఏంజెల్ వన్ లాగిన్ విజయవంతమైంది.")
-            return smart_api
-        else:
-            err = data.get('message') if data else 'నో రెస్పాన్స్'
-            print(f"లాగిన్ ఫెయిల్: {err}")
-            return None
-    except Exception as e:
-        print(f"SmartAPI కనెక్ట్ లోపం: {e}")
-        return None
+      - name: వైకాఫ్ స్క్రీనర్ రన్ చేయడం
+        env:
+          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
+          ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
+          ANGEL_TOTP_KEY: ${{ secrets.ANGEL_TOTP_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - << 'EOF'
+          import os
+          import io
+          import time
+          import requests
+          import pyotp
+          import numpy as np
+          import pandas as pd
+          import yfinance as yf
+          from datetime import datetime, timedelta
+          from SmartApi import SmartConnect
 
-def get_nifty50_return(smart_api, from_date, to_date):
-    """నిఫ్టీ 50 ఇండెక్స్ 6 నెలల రిటర్న్ లెక్కింపు"""
-    try:
-        historicParam = {
-            "exchange": "NSE",
-            "symboltoken": "99926000",
-            "interval": "ONE_DAY",
-            "fromdate": from_date,
-            "todate": to_date
-        }
-        res = smart_api.getCandleData(historicParam)
-        if res and res.get('status') and res.get('data'):
-            df = pd.DataFrame(res['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-            nifty_close = df['close'].astype(float)
-            lookback = min(125, len(nifty_close) - 1)
-            nifty_ret = ((nifty_close.iloc[-1] - nifty_close.iloc[-lookback]) / nifty_close.iloc[-lookback]) * 100
-            return round(nifty_ret, 1)
-    except Exception:
-        pass
-    return 8.0
+          API_KEY = os.getenv("ANGEL_API_KEY", "QVDAAb9M")
+          CLIENT_CODE = os.getenv("ANGEL_CLIENT_CODE", "J92644")
+          PIN = os.getenv("ANGEL_PIN", "0786")
+          TOTP_KEY = os.getenv("ANGEL_TOTP_KEY", "6MRVJ72DNHZR5AMQN3G4RFCVSU")
 
-def get_nifty500_tokens():
-    print("నిఫ్టీ 500 టోకెన్స్ డౌన్‌లోడ్ చేస్తున్నాము...")
-    url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-    res = requests.get(url, timeout=30)
-    master_data = res.json()
+          BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8928260274:AAHu2uLsWLDa3FsNfEw-bjRkD9M2A-I6YH0")
+          CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1376250638")
 
-    token_map = {}
-    for item in master_data:
-        if item.get('exch_seg') == 'NSE' and item.get('symbol', '').endswith('-EQ'):
-            sym_name = item['symbol'].replace('-EQ', '')
-            token_map[sym_name] = item['token']
+          FUNDAMENTAL_CRITERIA = {
+              "min_roe": 0.12,
+              "max_debt_to_equity": 1.2,
+              "max_peg": 2.0,
+              "min_promoter": 0.35,
+          }
 
-    symbols = []
-    try:
-        n500_url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(n500_url, headers=headers, timeout=15)
-        if resp.status_code == 200:
-            df = pd.read_csv(io.StringIO(resp.text))
-            symbols = df['Symbol'].dropna().tolist()
-    except Exception:
-        pass
+          SECTOR_PE_BENCHMARKS = {
+              "Technology": 28.0,
+              "Financial Services": 18.0,
+              "Healthcare": 32.0,
+              "Consumer Defensive": 42.0,
+              "Consumer Cyclical": 38.0,
+              "Energy": 14.0,
+              "Industrials": 32.0,
+              "Basic Materials": 16.0,
+              "Communication Services": 26.0,
+              "Utilities": 15.0,
+              "Real Estate": 25.0
+          }
 
-    if not symbols:
-        symbols = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "LT", "TATASTEEL"]
+          def send_telegram(message):
+              if not BOT_TOKEN or not CHAT_ID:
+                  print("టెలిగ్రామ్ వివరాలు లేవు.")
+                  return
+              url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              max_len = 3800
+              chunks = [message[i:i+max_len] for i in range(0, len(message), max_len)]
+              for chunk in chunks:
+                  payload = {"chat_id": CHAT_ID, "text": chunk, "parse_mode": "Markdown"}
+                  try:
+                      res = requests.post(url, json=payload, timeout=25)
+                      if res.status_code != 200:
+                          payload_plain = {"chat_id": CHAT_ID, "text": chunk}
+                          requests.post(url, json=payload_plain, timeout=25)
+                      print("టెలిగ్రామ్ అలర్ట్ పంపబడింది.")
+                  except Exception as e:
+                      print(f"టెలిగ్రామ్ ఎర్రర్: {e}")
 
-    valid_stocks = [(sym, token_map[sym]) for sym in symbols if sym in token_map]
-    print(f"మొత్తం {len(valid_stocks)} స్టాక్స్ స్కాన్ కోసం సిద్ధంగా ఉన్నాయి.")
-    return valid_stocks
+          def get_angel_session():
+              try:
+                  smart_api = SmartConnect(api_key=API_KEY)
+                  totp = pyotp.TOTP(TOTP_KEY).now()
+                  data = smart_api.generateSession(CLIENT_CODE, PIN, totp)
+                  if data and data.get('status'):
+                      print("ఏంజెల్ వన్ లాగిన్ విజయవంతమైంది.")
+                      return smart_api
+                  else:
+                      err = data.get('message') if data else 'నో రెస్పాన్స్'
+                      print(f"లాగిన్ ఫెయిల్: {err}")
+                      return None
+              except Exception as e:
+                  print(f"SmartAPI కనెక్ట్ లోపం: {e}")
+                  return None
 
-def analyze_fundamentals(symbol, current_price, ema20_price):
-    """yfinance ద్వారా ఫండమెంటల్స్, సెక్టార్ P/E మరియు కొనుగోలు ధర లెక్కింపు"""
-    try:
-        ticker = f"{symbol}.NS"
-        stock = yf.Ticker(ticker)
-        info = stock.info
+          def get_nifty50_return(smart_api, from_date, to_date):
+              try:
+                  historicParam = {
+                      "exchange": "NSE",
+                      "symboltoken": "99926000",
+                      "interval": "ONE_DAY",
+                      "fromdate": from_date,
+                      "todate": to_date
+                  }
+                  res = smart_api.getCandleData(historicParam)
+                  if res and res.get('status') and res.get('data'):
+                      df = pd.DataFrame(res['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                      nifty_close = df['close'].astype(float)
+                      lookback = min(125, len(nifty_close) - 1)
+                      nifty_ret = ((nifty_close.iloc[-1] - nifty_close.iloc[-lookback]) / nifty_close.iloc[-lookback]) * 100
+                      return round(nifty_ret, 1)
+              except Exception:
+                  pass
+              return 8.0
 
-        roe = info.get("returnOnEquity")
-        debt_to_equity = info.get("debtToEquity")
-        peg_ratio = info.get("pegRatio")
-        pe_ratio = info.get("trailingPE")
-        promoter_holding = info.get("heldPercentInsiders")
-        fii_holding = info.get("heldPercentInstitutions")
-        profit_growth = info.get("earningsGrowth")
-        free_cash_flow = info.get("freeCashflow")
-        sector = info.get("sector", "General")
+          def get_nifty500_tokens():
+              print("నిఫ్టీ 500 టోకెన్స్ డౌన్‌లోడ్ చేస్తున్నాము...")
+              url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+              res = requests.get(url, timeout=30)
+              master_data = res.json()
 
-        de_ratio = (debt_to_equity / 100.0) if debt_to_equity is not None else None
+              token_map = {}
+              for item in master_data:
+                  if item.get('exch_seg') == 'NSE' and item.get('symbol', '').endswith('-EQ'):
+                      sym_name = item['symbol'].replace('-EQ', '')
+                      token_map[sym_name] = item['token']
 
-        # సెక్టార్ P/E మరియు ఫెయిర్ వాల్యూ లెక్కింపు
-        sector_pe = SECTOR_PE_BENCHMARKS.get(sector, 24.0)
-        valuation_status = "N/A"
-        buy_recommendation = f"పుల్‌బ్యాక్ ఎంట్రీ: ₹{ema20_price}"
+              symbols = []
+              try:
+                  n500_url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
+                  headers = {'User-Agent': 'Mozilla/5.0'}
+                  resp = requests.get(n500_url, headers=headers, timeout=15)
+                  if resp.status_code == 200:
+                      df = pd.read_csv(io.StringIO(resp.text))
+                      symbols = df['Symbol'].dropna().tolist()
+              except Exception:
+                  pass
 
-        if pe_ratio and pe_ratio > 0 and sector_pe:
-            pe_diff = round(((pe_ratio - sector_pe) / sector_pe) * 100, 1)
-            fair_value_price = round(current_price * (sector_pe / pe_ratio), 1)
+              if not symbols:
+                  symbols = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "LT", "TATASTEEL"]
 
-            if pe_ratio < sector_pe:
-                valuation_status = f"🟢 డిస్కౌంట్ ({abs(pe_diff)}% చౌక)"
-                buy_recommendation = f"ప్రస్తుత ధర (₹{current_price}) లేదా పుల్‌బ్యాక్: ₹{ema20_price}"
-            elif pe_ratio > sector_pe:
-                valuation_status = f"🔴 ప్రీమియం (+{pe_diff}% అధికం)"
-                buy_recommendation = f"పుల్‌బ్యాక్ ఎంట్రీ: *₹{ema20_price}* (20 EMA) | ఫెయిర్ వాల్యూ: *~₹{fair_value_price}*"
-            else:
-                valuation_status = "⚪ ఫెయిర్ వ్యాల్యూ (సమం)"
-                buy_recommendation = f"ప్రస్తుత ధర వద్ద కొనుగోలు చేయవచ్చు (సపోర్ట్: ₹{ema20_price})"
+              valid_stocks = [(sym, token_map[sym]) for sym in symbols if sym in token_map]
+              print(f"మొత్తం {len(valid_stocks)} స్టాక్స్ స్కాన్ కోసం సిద్ధంగా ఉన్నాయి.")
+              return valid_stocks
 
-        checks = {
-            "ROE > 12%": roe is not None and roe >= FUNDAMENTAL_CRITERIA["min_roe"],
-            "Debt/Eq < 1.2": de_ratio is not None and de_ratio <= FUNDAMENTAL_CRITERIA["max_debt_to_equity"],
-            "PEG < 2.0": peg_ratio is not None and 0 < peg_ratio <= FUNDAMENTAL_CRITERIA["max_peg"],
-            "Promoter > 35%": promoter_holding is not None and promoter_holding >= FUNDAMENTAL_CRITERIA["min_promoter"],
-            "Profit Growth": profit_growth is not None and profit_growth > 0,
-            "Positive FCF": free_cash_flow is not None and free_cash_flow > 0
-        }
+          def analyze_fundamentals(symbol, current_price, ema20_price):
+              try:
+                  ticker = f"{symbol}.NS"
+                  stock = yf.Ticker(ticker)
+                  info = stock.info
 
-        score = sum(checks.values())
-        total = len(checks)
+                  roe = info.get("returnOnEquity")
+                  debt_to_equity = info.get("debtToEquity")
+                  peg_ratio = info.get("pegRatio")
+                  pe_ratio = info.get("trailingPE")
+                  promoter_holding = info.get("heldPercentInsiders")
+                  fii_holding = info.get("heldPercentInstitutions")
+                  profit_growth = info.get("earningsGrowth")
+                  free_cash_flow = info.get("freeCashflow")
+                  sector = info.get("sector", "General")
 
-        is_fundamental_ok = score >= 3
+                  de_ratio = (debt_to_equity / 100.0) if debt_to_equity is not None else None
+                  sector_pe = SECTOR_PE_BENCHMARKS.get(sector, 24.0)
+                  valuation_status = "N/A"
+                  buy_recommendation = f"పుల్‌బ్యాక్ ఎంట్రీ: ₹{ema20_price}"
 
-        return {
-            "is_fundamental_ok": is_fundamental_ok,
-            "score_val": score,
-            "score": f"{score}/{total}",
-            "roe": f"{round(roe * 100, 1)}%" if roe is not None else "N/A",
-            "de": round(de_ratio, 2) if de_ratio is not None else "N/A",
-            "peg": round(peg_ratio, 2) if peg_ratio is not None else "N/A",
-            "pe": round(pe_ratio, 1) if pe_ratio is not None else "N/A",
-            "sector_pe": sector_pe,
-            "val_status": valuation_status,
-            "buy_advice": buy_recommendation,
-            "promoter": f"{round(promoter_holding * 100, 1)}%" if promoter_holding is not None else "N/A",
-            "fii": f"{round(fii_holding * 100, 1)}%" if fii_holding is not None else "N/A"
-        }
-    except Exception:
-        return {
-            "is_fundamental_ok": True,
-            "score_val": 0,
-            "score": "N/A",
-            "roe": "N/A",
-            "de": "N/A",
-            "peg": "N/A",
-            "pe": "N/A",
-            "sector_pe": "N/A",
-            "val_status": "N/A",
-            "buy_advice": f"పుల్‌బ్యాక్ వద్ద: ₹{ema20_price}",
-            "promoter": "N/A",
-            "fii": "N/A"
-        }
+                  if pe_ratio and pe_ratio > 0 and sector_pe:
+                      pe_diff = round(((pe_ratio - sector_pe) / sector_pe) * 100, 1)
+                      fair_value_price = round(current_price * (sector_pe / pe_ratio), 1)
 
-def analyze_stock_advanced(df_daily, nifty_6m_ret):
-    if len(df_daily) < 300:
-        return None
+                      if pe_ratio < sector_pe:
+                          valuation_status = f"🟢 డిస్కౌంట్ ({abs(pe_diff)}% చౌక)"
+                          buy_recommendation = f"ప్రస్తుత ధర (₹{current_price}) లేదా పుల్‌బ్యాక్: ₹{ema20_price}"
+                      elif pe_ratio > sector_pe:
+                          valuation_status = f"🔴 ప్రీమియం (+{pe_diff}% అధికం)"
+                          buy_recommendation = f"పుల్‌బ్యాక్ ఎంట్రీ: *₹{ema20_price}* (20 EMA) | ఫెయిర్ వాల్యూ: *~₹{fair_value_price}*"
+                      else:
+                          valuation_status = "⚪ ఫెయిర్ వ్యాల్యూ (సమం)"
+                          buy_recommendation = f"ప్రస్తుత ధర వద్ద కొనుగోలు చేయవచ్చు (సపోర్ట్: ₹{ema20_price})"
 
-    d_close = df_daily['close'].astype(float)
-    d_volume = df_daily['volume'].astype(float)
+                  checks = {
+                      "ROE > 12%": roe is not None and roe >= FUNDAMENTAL_CRITERIA["min_roe"],
+                      "Debt/Eq < 1.2": de_ratio is not None and de_ratio <= FUNDAMENTAL_CRITERIA["max_debt_to_equity"],
+                      "PEG < 2.0": peg_ratio is not None and 0 < peg_ratio <= FUNDAMENTAL_CRITERIA["max_peg"],
+                      "Promoter > 35%": promoter_holding is not None and promoter_holding >= FUNDAMENTAL_CRITERIA["min_promoter"],
+                      "Profit Growth": profit_growth is not None and profit_growth > 0,
+                      "Positive FCF": free_cash_flow is not None and free_cash_flow > 0
+                  }
 
-    ema20_d = d_close.ewm(span=20, adjust=False).mean()
-    ema50_d = d_close.ewm(span=50, adjust=False).mean()
-    vol20_avg = d_volume.iloc[-21:-1].mean()
+                  score = sum(checks.values())
+                  total = len(checks)
+                  is_fundamental_ok = score >= 3
 
-    curr_d_close = d_close.iloc[-1]
-    curr_d_vol = d_volume.iloc[-1]
-    vol_boost = round(curr_d_vol / max(vol20_avg, 1), 2)
-    ema20_val = round(ema20_d.iloc[-1], 2)
+                  return {
+                      "is_fundamental_ok": is_fundamental_ok,
+                      "score_val": score,
+                      "score": f"{score}/{total}",
+                      "roe": f"{round(roe * 100, 1)}%" if roe is not None else "N/A",
+                      "de": round(de_ratio, 2) if de_ratio is not None else "N/A",
+                      "peg": round(peg_ratio, 2) if peg_ratio is not None else "N/A",
+                      "pe": round(pe_ratio, 1) if pe_ratio is not None else "N/A",
+                      "sector_pe": sector_pe,
+                      "val_status": valuation_status,
+                      "buy_advice": buy_recommendation,
+                      "promoter": f"{round(promoter_holding * 100, 1)}%" if promoter_holding is not None else "N/A",
+                      "fii": f"{round(fii_holding * 100, 1)}%" if fii_holding is not None else "N/A"
+                  }
+              except Exception:
+                  return {
+                      "is_fundamental_ok": True,
+                      "score_val": 0,
+                      "score": "N/A",
+                      "roe": "N/A",
+                      "de": "N/A",
+                      "peg": "N/A",
+                      "pe": "N/A",
+                      "sector_pe": "N/A",
+                      "val_status": "N/A",
+                      "buy_advice": f"పుల్‌బ్యాక్ వద్ద: ₹{ema20_price}",
+                      "promoter": "N/A",
+                      "fii": "N/A"
+                  }
 
-    if curr_d_close > ema20_d.iloc[-1] and curr_d_close > ema50_d.iloc[-1]:
-        daily_trigger = "✅ సూపర్ బుల్లిష్ (20 & 50 EMA పైన)"
-        is_daily_ok = True
-    elif curr_d_close < ema50_d.iloc[-1]:
-        daily_trigger = "⏳ డైలీ కరెక్షన్ (50 EMA క్రింద)"
-        is_daily_ok = False
-    else:
-        daily_trigger = "⚠️ కన్సాలిడేషన్ (EMAల మధ్య)"
-        is_daily_ok = False
+          def analyze_stock_advanced(df_daily, nifty_6m_ret):
+              if len(df_daily) < 300:
+                  return None
 
-    lookback_d = min(125, len(d_close) - 1)
-    stock_6m_ret = ((curr_d_close - d_close.iloc[-lookback_d]) / d_close.iloc[-lookback_d]) * 100
-    alpha = round(stock_6m_ret - nifty_6m_ret, 1)
+              d_close = df_daily['close'].astype(float)
+              d_volume = df_daily['volume'].astype(float)
 
-    if alpha >= 15:
-        rs_text = f"+{alpha}% (ఆల్ఫా లీడర్)"
-    elif alpha > 0:
-        rs_text = f"+{alpha}%"
-    else:
-        rs_text = f"{alpha}%"
+              ema20_d = d_close.ewm(span=20, adjust=False).mean()
+              ema50_d = d_close.ewm(span=50, adjust=False).mean()
+              vol20_avg = d_volume.iloc[-21:-1].mean()
 
-    df_m = df_daily.copy()
-    df_m['date'] = pd.to_datetime(df_m['date'])
-    df_m.set_index('date', inplace=True)
-    monthly_df = df_m.resample('ME').agg({
-        'open': 'first',
-        'high': 'max',
-        'low': 'min',
-        'close': 'last',
-        'volume': 'sum'
-    }).dropna()
+              curr_d_close = d_close.iloc[-1]
+              curr_d_vol = d_volume.iloc[-1]
+              vol_boost = round(curr_d_vol / max(vol20_avg, 1), 2)
+              ema20_val = round(ema20_d.iloc[-1], 2)
 
-    if len(monthly_df) < 30:
-        return None
+              if curr_d_close > ema20_d.iloc[-1] and curr_d_close > ema50_d.iloc[-1]:
+                  daily_trigger = "✅ సూపర్ బుల్లిష్ (20 & 50 EMA పైన)"
+                  is_daily_ok = True
+              elif curr_d_close < ema50_d.iloc[-1]:
+                  daily_trigger = "⏳ డైలీ కరెక్షన్ (50 EMA క్రింద)"
+                  is_daily_ok = False
+              else:
+                  daily_trigger = "⚠️ కన్సాలిడేషన్ (EMAల మధ్య)"
+                  is_daily_ok = False
 
-    m_close = monthly_df['close'].astype(float)
-    m_high = monthly_df['high'].astype(float)
-    m_low = monthly_df['low'].astype(float)
+              lookback_d = min(125, len(d_close) - 1)
+              stock_6m_ret = ((curr_d_close - d_close.iloc[-lookback_d]) / d_close.iloc[-lookback_d]) * 100
+              alpha = round(stock_6m_ret - nifty_6m_ret, 1)
 
-    exp12 = m_close.ewm(span=12, adjust=False).mean()
-    exp26 = m_close.ewm(span=26, adjust=False).mean()
-    macd = exp12 - exp26
-    signal = macd.ewm(span=9, adjust=False).mean()
+              if alpha >= 15:
+                  rs_text = f"+{alpha}% (ఆల్ఫా లీడర్)"
+              elif alpha > 0:
+                  rs_text = f"+{alpha}%"
+              else:
+                  rs_text = f"{alpha}%"
 
-    curr_macd = macd.iloc[-1]
-    curr_sig = signal.iloc[-1]
-    is_macd_bullish = curr_macd > curr_sig
+              df_m = df_daily.copy()
+              df_m['date'] = pd.to_datetime(df_m['date'])
+              df_m.set_index('date', inplace=True)
+              monthly_df = df_m.resample('ME').agg({
+                  'open': 'first',
+                  'high': 'max',
+                  'low': 'min',
+                  'close': 'last',
+                  'volume': 'sum'
+              }).dropna()
 
-    high_2year = m_high.iloc[-25:-1].max()
-    high_15m = m_high.iloc[-16:-1].max()
-    low_15m = m_low.iloc[-16:-1].min()
+              if len(monthly_df) < 30:
+                  return None
 
-    curr_m_close = m_close.iloc[-1]
-    curr_m_low = m_low.iloc[-1]
+              m_close = monthly_df['close'].astype(float)
+              m_high = monthly_df['high'].astype(float)
+              m_low = monthly_df['low'].astype(float)
 
-    wyckoff_stage = None
+              exp12 = m_close.ewm(span=12, adjust=False).mean()
+              exp26 = m_close.ewm(span=26, adjust=False).mean()
+              macd = exp12 - exp26
+              signal = macd.ewm(span=9, adjust=False).mean()
 
-    if curr_m_close >= high_2year:
-        wyckoff_stage = "Phase E (2 ఏళ్ల గరిష్ట బ్రేక్‌అవుట్)"
-    elif curr_m_close >= (0.97 * high_15m) and curr_m_close <= (1.05 * high_15m):
-        wyckoff_stage = "Phase D (బ్రేక్‌అవుట్‌కు సిద్ధం)"
-    elif curr_m_low < low_15m and curr_m_close > low_15m:
-        wyckoff_stage = "Phase C (స్ప్రింగ్ బాటమ్ రివర్సల్)"
+              curr_macd = macd.iloc[-1]
+              curr_sig = signal.iloc[-1]
+              is_macd_bullish = curr_macd > curr_sig
 
-    if wyckoff_stage and is_macd_bullish:
-        return {
-            "price": round(curr_d_close, 2),
-            "ema20": ema20_val,
-            "stage": wyckoff_stage,
-            "daily_trigger": daily_trigger,
-            "rs": rs_text,
-            "vol_boost": vol_boost,
-            "alpha_val": alpha,
-            "is_super_bullish": is_daily_ok
-        }
+              high_2year = m_high.iloc[-25:-1].max()
+              high_15m = m_high.iloc[-16:-1].max()
+              low_15m = m_low.iloc[-16:-1].min()
 
-    return None
+              curr_m_close = m_close.iloc[-1]
+              curr_m_low = m_low.iloc[-1]
 
-def main():
-    smart_api = get_angel_session()
-    if not smart_api:
-        send_telegram("⚠️ *స్క్రీనర్:* ఏంజెల్ వన్ లాగిన్ విఫలమైంది.")
-        return
+              wyckoff_stage = None
 
-    to_date = datetime.now().strftime("%Y-%m-%d 15:30")
-    from_date = (datetime.now() - timedelta(days=1400)).strftime("%Y-%m-%d 09:15")
+              if curr_m_close >= high_2year:
+                  wyckoff_stage = "Phase E (2 ఏళ్ల గరిష్ట బ్రేక్‌అవుట్)"
+              elif curr_m_close >= (0.97 * high_15m) and curr_m_close <= (1.05 * high_15m):
+                  wyckoff_stage = "Phase D (బ్రేక్‌అవుట్‌కు సిద్ధం)"
+              elif curr_m_low < low_15m and curr_m_close > low_15m:
+                  wyckoff_stage = "Phase C (స్ప్రింగ్ బాటమ్ రివర్సల్)"
 
-    nifty_ret = get_nifty50_return(smart_api, from_date, to_date)
-    print(f"నిఫ్టీ 6 నెలల రిటర్న్: {nifty_ret}%")
+              if wyckoff_stage and is_macd_bullish:
+                  return {
+                      "price": round(curr_d_close, 2),
+                      "ema20": ema20_val,
+                      "stage": wyckoff_stage,
+                      "daily_trigger": daily_trigger,
+                      "rs": rs_text,
+                      "vol_boost": vol_boost,
+                      "alpha_val": alpha,
+                      "is_super_bullish": is_daily_ok
+                  }
 
-    stocks = get_nifty500_tokens()
-    qualified_stocks = []
+              return None
 
-    print("టెక్నికల్ & ఫండమెంటల్ స్కానింగ్ ప్రారంభమైంది...")
+          def main():
+              smart_api = get_angel_session()
+              if not smart_api:
+                  send_telegram("⚠️ *స్క్రీనర్:* ఏంజెల్ వన్ లాగిన్ విఫలమైంది.")
+                  return
 
-    for sym, token in stocks:
-        try:
-            time.sleep(0.35)
-            historicParam = {
-                "exchange": "NSE",
-                "symboltoken": str(token),
-                "interval": "ONE_DAY",
-                "fromdate": from_date,
-                "todate": to_date
-            }
-            res = smart_api.getCandleData(historicParam)
-            if not res or not res.get('status') or not res.get('data'):
-                continue
+              to_date = datetime.now().strftime("%Y-%m-%d 15:30")
+              from_date = (datetime.now() - timedelta(days=1400)).strftime("%Y-%m-%d 09:15")
 
-            df = pd.DataFrame(res['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-            tech_result = analyze_stock_advanced(df, nifty_ret)
+              nifty_ret = get_nifty50_return(smart_api, from_date, to_date)
+              print(f"నిఫ్టీ 6 నెలల రిటర్న్: {nifty_ret}%")
 
-            if tech_result:
-                fund_result = analyze_fundamentals(sym, tech_result["price"], tech_result["ema20"])
-                if fund_result["is_fundamental_ok"]:
-                    combined_data = {**tech_result, **fund_result}
-                    qualified_stocks.append((sym, combined_data))
+              stocks = get_nifty500_tokens()
+              qualified_stocks = []
 
-        except Exception:
-            continue
+              print("టెక్నికల్ & ఫండమెంటల్ స్కానింగ్ ప్రారంభమైంది...")
 
-    if not qualified_stocks:
-        send_telegram("📊 *మార్కెట్ స్క్రీనర్ అలర్ట్*\n\n_ఈరోజు టెక్నికల్ + ఫండమెంటల్ నిబంధనలకు సరిపోలిన స్టాక్స్ లేవు._")
-        return
+              for sym, token in stocks:
+                  try:
+                      time.sleep(0.35)
+                      historicParam = {
+                          "exchange": "NSE",
+                          "symboltoken": str(token),
+                          "interval": "ONE_DAY",
+                          "fromdate": from_date,
+                          "todate": to_date
+                      }
+                      res = smart_api.getCandleData(historicParam)
+                      if not res or not res.get('status') or not res.get('data'):
+                          continue
 
-    qualified_stocks.sort(key=lambda x: x[1]['alpha_val'], reverse=True)
+                      df = pd.DataFrame(res['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                      tech_result = analyze_stock_advanced(df, nifty_ret)
 
-    msg = [
-        "📊 *ఏంజెల్ వన్ + ఫండమెంటల్ హైబ్రిడ్ స్క్రీనర్*\n",
-        "💡 *విశ్లేషణ:* బ్రేక్‌అవుట్ మోమెంటమ్ + కంపెనీ ఆర్థిక బలం (High-Conviction Setups).\n",
-        "────────────────────"
-    ]
+                      if tech_result:
+                          fund_result = analyze_fundamentals(sym, tech_result["price"], tech_result["ema20"])
+                          if fund_result["is_fundamental_ok"]:
+                              combined_data = {**tech_result, **fund_result}
+                              qualified_stocks.append((sym, combined_data))
 
-    for sym, data in qualified_stocks:
-        investing_url = f"https://in.investing.com/search/?q={sym}"
-        tradingview_url = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
+                  except Exception:
+                      continue
 
-        # 5/6 స్కోర్ మరియు Phase D/E ఉన్న స్టాక్స్‌ను హై-కన్విక్షన్‌గా హైలైట్ చేయడం
-        is_high_conviction = (data.get('score_val', 0) >= 5) and ("Phase E" in data['stage'] or "Phase D" in data['stage'])
-        conviction_tag = "🌟 *హై-కన్విక్షన్ సెటప్:* మోమెంటమ్ + అంతర్లీన కంపెనీ బలం తోడైంది! (తక్కువ రిస్క్‌తో ర్యాలీ అవకాశం)\n" if is_high_conviction else ""
+              if not qualified_stocks:
+                  send_telegram("📊 *మార్కెట్ స్క్రీనర్ అలర్ట్*\n\n_ఈరోజు టెక్నికల్ + ఫండమెంటల్ నిబంధనలకు సరిపోలిన స్టాక్స్ లేవు._")
+                  return
 
-        stock_block = (
-            f"\n🔥 *{sym}* — ₹{data['price']}\n"
-            f"{conviction_tag}"
-            f"• 📌 *స్టేజ్:* {data['stage']}\n"
-            f"• 🎯 *డైలీ ఎంట్రీ:* {data['daily_trigger']}\n"
-            f"• 💪 *RS vs నిఫ్టీ:* {data['rs']} | వాల్యూమ్: {data['vol_boost']}x\n"
-            f"• 📈 *ఫండమెంటల్ స్కోర్:* {data['score']}\n"
-            f"• 🏢 *ROE:* {data['roe']} | *D/E:* {data['de']} | *PEG:* {data['peg']}\n"
-            f"• 👥 *ప్రమోటర్:* {data['promoter']} | 🏛️ *FII/సంస్థాగత వాటా:* {data['fii']}\n"
-            f"• ⚖️ *P/E విశ్లేషణ:* స్టాక్ P/E: *{data['pe']}* vs సెక్టార్ P/E: *{data['sector_pe']}*\n"
-            f"• 🏷️ *ధర స్థితి:* {data['val_status']}\n"
-            f"• 🎯 *కొనుగోలు ధర (Buy Price):* {data['buy_advice']}\n"
-            f"• 📊 *చార్ట్ లింక్:* [Investing India లో చూడండి]({investing_url}) | [TradingView]({tradingview_url})\n"
-            f"────────────────────"
-        )
-        msg.append(stock_block)
+              qualified_stocks.sort(key=lambda x: x[1]['alpha_val'], reverse=True)
 
-    msg.append("\n💡 *ముఖ్యమైన విశ్లేషణ సూచన:*")
-    msg.append("• 💎 *5/6 స్కోర్ + Phase E/D బ్రేక్‌అవుట్:* ఈ స్టాక్స్‌లో టెక్నికల్ మోమెంటమ్‌తో పాటు అంతర్లీన కంపెనీ ఆర్థిక బలం కూడా తోడైందని, తక్కువ రిస్క్‌తో ర్యాలీ కొనసాగే అవకాశాలు మెండుగా ఉన్నాయని అర్థం చేసుకోవాలి.")
-    msg.append("• 🛡️ *రిస్క్ మేనేజ్‌మెంట్:* స్టాక్ ఎంత బలంగా ఉన్నప్పటికీ, ఎంట్రీని 20 EMA పుల్‌బ్యాక్ వద్ద ప్లాన్ చేసుకుంటూ 50 EMA క్రింద స్టాప్‌లాస్ ఖచ్చితంగా పాటించండి.")
+              msg = [
+                  "📊 *ఏంజెల్ వన్ + ఫండమెంటల్ హైబ్రిడ్ స్క్రీనర్*\n",
+                  "💡 *విశ్లేషణ:* బ్రేక్‌అవుట్ మోమెంటమ్ + కంపెనీ ఆర్థిక బలం (High-Conviction Setups).\n",
+                  "────────────────────"
+              ]
 
-    send_telegram("\n".join(msg))
+              for sym, data in qualified_stocks:
+                  investing_url = f"https://in.investing.com/search/?q={sym}"
+                  tradingview_url = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
 
-if __name__ == "__main__":
-    main()
+                  is_high_conviction = (data.get('score_val', 0) >= 5) and ("Phase E" in data['stage'] or "Phase D" in data['stage'])
+                  conviction_tag = "🌟 *హై-కన్విక్షన్ సెటప్:* మోమెంటమ్ + అంతర్లీన కంపెనీ బలం తోడైంది! (తక్కువ రిస్క్‌తో ర్యాలీ అవకాశం)\n" if is_high_conviction else ""
+
+                  stock_block = (
+                      f"\n🔥 *{sym}* — ₹{data['price']}\n"
+                      f"{conviction_tag}"
+                      f"• 📌 *స్టేజ్:* {data['stage']}\n"
+                      f"• 🎯 *డైలీ ఎంట్రీ:* {data['daily_trigger']}\n"
+                      f"• 💪 *RS vs నిఫ్టీ:* {data['rs']} | వాల్యూమ్: {data['vol_boost']}x\n"
+                      f"• 📈 *ఫండమెంటల్ స్కోర్:* {data['score']}\n"
+                      f"• 🏢 *ROE:* {data['roe']} | *D/E:* {data['de']} | *PEG:* {data['peg']}\n"
+                      f"• 👥 *ప్రమోటర్:* {data['promoter']} | 🏛️ *FII/సంస్థాగత వాటా:* {data['fii']}\n"
+                      f"• ⚖️ *P/E విశ్లేషణ:* స్టాక్ P/E: *{data['pe']}* vs సెక్టార్ P/E: *{data['sector_pe']}*\n"
+                      f"• 🏷️ *ధర స్థితి:* {data['val_status']}\n"
+                      f"• 🎯 *కొనుగోలు ధర (Buy Price):* {data['buy_advice']}\n"
+                      f"• 📊 *చార్ట్ లింక్:* [Investing India లో చూడండి]({investing_url}) | [TradingView]({tradingview_url})\n"
+                      f"────────────────────"
+                  )
+                  msg.append(stock_block)
+
+              msg.append("\n💡 *ముఖ్యమైన విశ్లేషణ సూచన:*")
+              msg.append("• 💎 *5/6 స్కోర్ + Phase E/D బ్రేక్‌అవుట్:* ఈ స్టాక్స్‌లో టెక్నికల్ మోమెంటమ్‌తో పాటు అంతర్లీన కంపెనీ ఆర్థిక బలం కూడా తోడైందని, తక్కువ రిస్క్‌తో ర్యాలీ కొనసాగే అవకాశాలు మెండుగా ఉన్నాయని అర్థం చేసుకోవాలి.")
+              msg.append("• 🛡️ *రిస్క్ మేనేజ్‌మెంట్:* స్టాక్ ఎంత బలంగా ఉన్నప్పటికీ, ఎంట్రీని 20 EMA పుల్‌బ్యాక్ వద్ద ప్లాన్ చేసుకుంటూ 50 EMA క్రింద స్టాప్‌లాస్ ఖచ్చితంగా పాటించండి.")
+
+              send_telegram("\n".join(msg))
+
+          if __name__ == "__main__":
+              main()
+          EOF
