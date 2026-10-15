@@ -104,17 +104,11 @@ jobs:
               if not BOT_TOKEN or not CHAT_ID:
                   return
               url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-              trimmed_caption = caption[:1020]
               files = {"photo": ("macd_chart.png", photo_bytes, "image/png")}
-              data = {"chat_id": CHAT_ID, "caption": trimmed_caption, "parse_mode": "Markdown"}
+              data = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "Markdown"}
               try:
-                  res = requests.post(url, files=files, data=data, timeout=35)
-                  if res.status_code == 200:
-                      print("చార్ట్ ఫోటో పంపబడింది.")
-                  else:
-                      print(f"ఫోటో API రెస్పాన్స్ ఎర్రర్: {res.text}")
-                      data.pop("parse_mode", None)
-                      requests.post(url, files={"photo": ("macd_chart.png", photo_bytes, "image/png")}, data=data, timeout=35)
+                  requests.post(url, files=files, data=data, timeout=30)
+                  print("చార్ట్ ఫోటో పంపబడింది.")
               except Exception as e:
                   print(f"ఫోటో ఎర్రర్: {e}")
 
@@ -195,7 +189,7 @@ jobs:
                       p_tag = about_div.find('p')
                       if p_tag:
                           full_about = p_tag.text.strip().replace('\n', ' ')
-                          biz_info = (full_about[:120] + '...') if len(full_about) > 120 else full_about
+                          biz_info = (full_about[:160] + '...') if len(full_about) > 160 else full_about
 
                   ratios = {}
                   for li in soup.find_all('li', class_='flex flex-space-between'):
@@ -204,7 +198,18 @@ jobs:
                       if name_elem and val_elem:
                           ratios[name_elem.text.strip()] = val_elem.text.strip()
 
-                  roe = parse_val(ratios.get('Return on equity'))
+                  # ROE విశ్లేషణను మెరుగుపరచడం (ROE లేదా Return on equity రెండింటినీ పరిశీలించడం)
+                  roe_raw = ratios.get('ROE') or ratios.get('Return on equity')
+                  if not roe_raw:
+                      for li in soup.find_all('li'):
+                          text_content = li.text.strip()
+                          if 'ROE' in text_content or 'Return on equity' in text_content:
+                              val_span = li.find('span', class_='nowrap value') or li.find('span', class_='number')
+                              if val_span:
+                                  roe_raw = val_span.text.strip()
+                                  break
+
+                  roe = parse_val(roe_raw)
                   pe_ratio = parse_val(ratios.get('Stock P/E'))
                   de_ratio = parse_val(ratios.get('Debt to equity'))
                   if de_ratio is None:
@@ -283,16 +288,26 @@ jobs:
 
                   roe_desc = f"ఈ కంపెనీ షేర్ మీద ఏడాదికి {roe}% లాభం సంపాదిస్తోంది" if roe else "లాభాల శాతం అందుబాటులో లేదు"
                   de_desc = "కంపెనీకి అప్పుల భారం లేదు (చాలా సురక్షితం)" if (de_ratio is not None and de_ratio <= 1.2) else "కంపెనీకి అప్పుల భారం ఎక్కువగా ఉంది"
-                  peg_desc = "లాభాల పెరుగుదలకు సరసమైన ధర" if (peg_ratio and peg_ratio <= 2.0) else "ధర కాస్త ఎక్కువ"
+                  peg_desc = "లాభాల పెరుగుదలకు తగిన సరసమైన ధరలో ఉంది" if (peg_ratio and peg_ratio <= 2.0) else "లాభాల పెరుగుదల కంటే ప్రస్తుత షేరు ధర కాస్త ఎక్కువగా ఉంది"
+                  fcf_desc = "ఖర్చులు పోను కంపెనీ చేతిలో నికర నగదు మిగులుతోంది" if c_fcf else "కంపెనీ చేతిలో ఖర్చులు పోను నికర నగదు మిగలడం లేదు"
+                  profit_desc = "గతంతో పోలిస్తే కంపెనీ నికర లాభాలు పెరుగుతున్నాయి" if c_profit else "గతంతో పోలిస్తే కంపెనీ నికర లాభాలు తగ్గుతున్నాయి"
+                  pe_desc = f"సెక్టార్ కంటే ఈ షేరు {pe_diff}% తక్కువ ధరకు (చౌకగా) లభిస్తోంది"
+                  promoter_desc = f"కంపెనీ యజమానుల వద్దే {promoter_holding}% వాటా ఉంది" if promoter_holding else "యజమానుల వాటా వివరాలు లేవు"
 
                   if promoter_pledge > 0:
-                      pledge_text = f"⚠️ *తాకట్టు:* {promoter_pledge}% షేర్లు ఉన్నాయి"
+                      pledge_text = f"⚠️ *తాకట్టు:* {promoter_pledge}% షేర్లు తాకట్టులో ఉన్నాయి"
                   else:
-                      pledge_text = "🔒 *తాకట్టు:* 0.0% (చాలా సురక్షితం)"
+                      pledge_text = "🔒 *తాకట్టు:* 0.0% (ఒక్క షేరు కూడా తాకట్టు పెట్టలేదు, చాలా సురక్షితం)"
 
                   risk_note = ""
                   if not c_profit:
-                      risk_note = "\nℹ️ *నెగెటివ్ గ్రోత్ ఉన్నా D/E తక్కువగా ఉండటం వల్ల ఎంట్రీ పరిశీలించవచ్చు.*"
+                      risk_note = (
+                          "────────────────────\n"
+                          "ℹ️ *🔴 నెగెటివ్ ప్రాఫిట్ గ్రోత్ ఉన్నా ఎందుకు కొనవచ్చు:*\n"
+                          "• కంపెనీకి అప్పుల భారం లేదు (D/E < 1.2) & క్యాష్ ఫ్లో బలంగా ఉంది.\n"
+                          "• లాభాలు తగ్గడం వల్లనే షేరు డిస్కౌంట్ ధరకు లభిస్తోంది.\n"
+                          "• 4H బాటమ్ MACD రివర్సల్ ఉన్నందున సపోర్ట్ వద్ద ఎంట్రీ పరిశీలించవచ్చు.\n"
+                      )
 
                   return {
                       "is_discounted": True,
@@ -315,6 +330,10 @@ jobs:
                       "roe_desc": roe_desc,
                       "de_desc": de_desc,
                       "peg_desc": peg_desc,
+                      "fcf_desc": fcf_desc,
+                      "profit_desc": profit_desc,
+                      "pe_desc": pe_desc,
+                      "promoter_desc": promoter_desc,
                       "pledge_text": pledge_text,
                       "risk_note": risk_note,
                       "fii_line": f"🔴 *FII హోల్డింగ్:* {fii_text}" if fii_color == "🔴" else f"🟢 *FII హోల్డింగ్:* {fii_text}",
@@ -429,8 +448,15 @@ jobs:
               if curr_close < curr_open:
                   return None
 
+              # సరిచేసిన వాల్యూమ్ సగటు లెక్కింపు (NaN మరియు 0 డివిజన్ నివారణ)
+              if len(df_d['volume']) < 22:
+                  return None
+
               vol20_avg = df_d['volume'].iloc[-21:-1].mean()
-              vol_boost = round(curr_vol / max(vol20_avg, 1), 2)
+              if pd.isna(vol20_avg) or vol20_avg <= 0:
+                  return None
+
+              vol_boost = round(curr_vol / vol20_avg, 2)
               if vol_boost < 1.1:
                   return None
 
@@ -486,7 +512,7 @@ jobs:
           def main():
               smart_api = get_angel_session()
               if not smart_api:
-                  send_telegram("⚠️ *బాటమ్ MACD:* ఏంజెల్ వన్ లాగిన్ విఫలమైంది.")
+                  send_telegram("⚠️ *స్క్రీనర్:* ఏంజెల్ వన్ లాగిన్ విఫలమైంది. GitHub Secrets తనిఖీ చేయండి.")
                   return
 
               to_date = datetime.now().strftime("%Y-%m-%d 15:30")
@@ -495,7 +521,7 @@ jobs:
 
               stocks = get_top_2000_stocks()
               if not stocks:
-                  send_telegram("⚠️ *బాటమ్ MACD:* NSE మాస్టర్ డౌన్‌లోడ్ విఫలమైంది.")
+                  send_telegram("⚠️ *స్క్రీనర్:* ఏంజెల్ వన్ నుండి స్టాక్స్ డేటా డౌన్‌లోడ్ కాలేదు.")
                   return
 
               results = []
@@ -503,7 +529,7 @@ jobs:
 
               for sym, token in stocks:
                   try:
-                      time.sleep(0.35)
+                      time.sleep(0.40)
                       tech_res = analyze_stock_full(smart_api, token, from_date_daily, from_date_hourly, to_date)
                       
                       if tech_res:
@@ -517,7 +543,7 @@ jobs:
                       continue
 
               if not results:
-                  send_telegram("📊 *బాటమ్ MACD అలర్ట్*\n\n_ఈరోజు MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు._")
+                  send_telegram("📊 *బాటమ్ MACD స్క్రీనర్ అలర్ట్*\n\n_ఈరోజు 4H/డైలీ లో బాటమ్ MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు._")
                   return
 
               results.sort(
@@ -557,24 +583,32 @@ jobs:
                       f"> 🌕 *1M :* {d['stat_1m']}\n"
                       f">\n"
                       f"> • 📈 *Fundamental Score: {d['score_text']}*\n"
-                      f">   {'🟢' if d['c_roe'] else '🔴'} *ROE:* {d['roe']}% (> 12%)\n"
+                      f">   {'🟢' if d['c_roe'] else '🔴'} *ROE:* {d['roe'] if d['roe'] is not None else 'N/A'}% (> 12%)\n"
                       f">     └ _{d['roe_desc']}_\n"
-                      f">   {'🟢' if d['c_de'] else '🔴'} *D/E:* {d['de_ratio']} (< 1.2)\n"
+                      f">   {'🟢' if d['c_de'] else '🔴'} *D/E:* {d['de_ratio'] if d['de_ratio'] is not None else 'N/A'} (< 1.2)\n"
                       f">     └ _{d['de_desc']}_\n"
-                      f">   {'🟢' if d['c_peg'] else '🔴'} *PEG:* {d['peg_ratio']} (< 2.0)\n"
-                      f">   {d['pe_color']} *P/E:* {round(d['pe_ratio'], 1)} (సెక్టార్: {d['sector_pe']})\n"
-                      f">   {'🟢' if d['c_prom'] else '🔴'} *Promoter:* {d['promoter_holding']}%\n"
+                      f">   {'🟢' if d['c_peg'] else '🔴'} *PEG:* {d['peg_ratio'] if d['peg_ratio'] is not None else 'N/A'} (< 2.0)\n"
+                      f">     └ _{d['peg_desc']}_\n"
+                      f">   {'🟢' if d['c_fcf'] else '🔴'} *Free Cash Flow:* {'పాజిటివ్' if d['c_fcf'] else 'నెగెటివ్'}\n"
+                      f">     └ _{d['fcf_desc']}_\n"
+                      f">   {'🟢' if d['c_profit'] else '🔴'} *Profit Growth:* {'పాజిటివ్' if d['c_profit'] else 'నెగెటివ్'}\n"
+                      f">     └ _{d['profit_desc']}_\n"
+                      f">   {d['pe_color']} *P/E:* స్టాక్ {round(d['pe_ratio'], 1)} vs సెక్టార్ {d['sector_pe']}\n"
+                      f">     └ _{d['pe_desc']}_\n"
+                      f">\n"
+                      f">   {'🟢' if d['c_prom'] else '🔴'} *Promoter:* {d['promoter_holding'] if d['promoter_holding'] is not None else 'N/A'}% (> 35%)\n"
+                      f">     └ _{d['promoter_desc']}_\n"
                       f">     └ _{d['pledge_text']}_\n"
                       f"> {d['fii_line']}\n"
                       f"> {d['val_status']}\n\n"
                       f"🎯 *కొనుగోలు:* {d['buy_advice']}\n"
-                      f"🏢 *వ్యాపారం:* ||{d['business_model']}||\n"
+                      f"🏢 *వ్యాపారం (Business):* ||{d['business_model']}||\n"
                       f"{d['risk_note']}".rstrip()
                   )
 
                   chart_buf = generate_live_chart_image(d['df_daily'], sym)
                   send_telegram_photo(chart_buf, caption)
-                  time.sleep(4)
+                  time.sleep(2)
 
           if __name__ == "__main__":
               main()
