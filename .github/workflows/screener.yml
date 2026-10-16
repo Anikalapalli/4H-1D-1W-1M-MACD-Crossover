@@ -1,4 +1,4 @@
-name: NSE టాప్ 2000 డైలీ బాటమ్ MACD స్క్రీనర్
+name: NSE టాప్ 2000 డైలీ, వీక్లీ & మంత్లీ బాటమ్ MACD స్క్రీనర్
 
 on:
   schedule:
@@ -30,7 +30,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install smartapi-python pyotp pandas numpy requests matplotlib beautifulsoup4
 
-      - name: డైలీ బాటమ్ MACD స్క్రీనర్ రన్ చేయడం
+      - name: బాటమ్ MACD స్క్రీనర్ రన్ చేయడం
         env:
           ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
           ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
@@ -44,6 +44,7 @@ jobs:
           import os
           import io
           import time
+          import calendar
           import smtplib
           import requests
           import pyotp
@@ -70,10 +71,10 @@ jobs:
           EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 
           FUNDAMENTAL_CRITERIA = {
-              "min_roe": 12.0,            # 12% కంటే ఎక్కువ
-              "max_debt_to_equity": 1.2,   # 1.2 కంటే తక్కువ
-              "max_peg": 2.0,              # 2.0 కంటే తక్కువ
-              "min_promoter": 35.0,        # 35% కంటే ఎక్కువ
+              "min_roe": 12.0,
+              "max_debt_to_equity": 1.2,
+              "max_peg": 2.0,
+              "min_promoter": 35.0,
           }
 
           SECTOR_PE_BENCHMARKS = {
@@ -108,7 +109,6 @@ jobs:
               html_part = MIMEText(html_body, 'html')
               alt_part.attach(html_part)
 
-              # చార్ట్ ఇమేజ్‌లను ఈమెయిల్‌లో ఇన్‌లైన్‌గా జతచేయడం
               if images:
                   for cid, img_bytes in images.items():
                       img_mime = MIMEImage(img_bytes)
@@ -120,7 +120,7 @@ jobs:
                   with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
                       server.login(GMAIL_USER, GMAIL_APP_PASS)
                       server.send_message(msg)
-                  print("Gmail ఈమెయిల్ విజయవంతంగా పంపబడింది.")
+                  print(f"Gmail ఈమెయిల్ పంపబడింది: {subject}")
               except Exception as e:
                   print(f"Gmail పంపడంలో లోపం: {e}")
 
@@ -145,7 +145,7 @@ jobs:
 
           def get_angel_session():
               if not all([API_KEY, CLIENT_CODE, PIN, TOTP_KEY]):
-                  print("ఏంజెల్ వన్ సీక్రెట్స్ సరిగ్గా కాన్ఫిగర్ కాలేదు.")
+                  print("ఏంజెల్ వన్ సీక్రెట్స్ సరిగ్గా లేవు.")
                   return None
               try:
                   smart_api = SmartConnect(api_key=API_KEY)
@@ -155,15 +155,14 @@ jobs:
                       print("ఏంజెల్ వన్ లాగిన్ విజయవంతమైంది.")
                       return smart_api
                   else:
-                      err = data.get('message') if data else 'నో రెస్పాన్స్'
-                      print(f"లాగిన్ విఫలమైంది: {err}")
+                      print(f"లాగిన్ విఫలమైంది: {data.get('message') if data else 'నో రెస్పాన్స్'}")
                       return None
               except Exception as e:
                   print(f"SmartAPI కనెక్ట్ లోపం: {e}")
                   return None
 
           def get_top_2000_stocks():
-              print("NSE మాస్టర్ నుండి స్టాక్స్ డౌన్‌లోడ్ అవుతున్నాయి...")
+              print("NSE మాస్టర్ డౌన్‌లోడ్ అవుతోంది...")
               master_url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
               master_data = None
               for attempt in range(1, 4):
@@ -173,7 +172,6 @@ jobs:
                           master_data = res.json()
                           break
                   except Exception as e:
-                      print(f"ప్రయత్నం {attempt} లోపం: {e}")
                       time.sleep(3)
 
               if not master_data:
@@ -188,7 +186,6 @@ jobs:
                       if sym not in seen_symbols and not sym.endswith('-BE') and not sym.endswith('-BZ'):
                           seen_symbols.add(sym)
                           valid_stocks.append((sym, token))
-
               return valid_stocks[:2000]
 
           def parse_val(text):
@@ -215,49 +212,44 @@ jobs:
 
                   about_div = soup.find('div', class_='about')
                   biz_info = "కంపెనీ ప్రధాన ఉత్పత్తులు & సేవల వ్యాపారంలో ఉంది."
-                  if about_div:
-                      p_tag = about_div.find('p')
-                      if p_tag:
-                          full_about = p_tag.text.strip().replace('\n', ' ')
-                          biz_info = (full_about[:200] + '...') if len(full_about) > 200 else full_about
+                  if about_div and about_div.find('p'):
+                      full_about = about_div.find('p').text.strip().replace('\n', ' ')
+                      biz_info = (full_about[:200] + '...') if len(full_about) > 200 else full_about
 
                   ratios = {}
                   for li in soup.find_all('li', class_='flex flex-space-between'):
-                      name_elem = li.find('span', class_='name')
-                      val_elem = li.find('span', class_='nowrap value')
-                      if name_elem and val_elem:
-                          ratios[name_elem.text.strip()] = val_elem.text.strip()
+                      n = li.find('span', class_='name')
+                      v = li.find('span', class_='nowrap value')
+                      if n and v:
+                          ratios[n.text.strip()] = v.text.strip()
 
-                  # బిజినెస్ క్యాపిటల్ (Market Cap)
                   mcap = parse_val(ratios.get('Market Cap'))
                   if mcap is not None:
                       if mcap >= 20000:
-                          cap_category = "లార్జ్ క్యాప్ (Large Cap - అతి సురక్షితం)"
+                          cap_cat = "లార్జ్ క్యాప్ (Large Cap - అతి సురక్షితం)"
                       elif mcap >= 5000:
-                          cap_category = "మిడ్ క్యాప్ (Mid Cap - మంచి వృద్ధి)"
+                          cap_cat = "మిడ్ క్యాప్ (Mid Cap - మంచి వృద్ధి)"
                       elif mcap >= 500:
-                          cap_category = "స్మాల్ క్యాప్ (Small Cap - అధిక రాబడి/రిస్క్)"
+                          cap_cat = "స్మాల్ క్యాప్ (Small Cap - అధిక రాబడి/రిస్క్)"
                       else:
-                          cap_category = "మైక్రో క్యాప్ (Micro Cap - హై రిస్క్)"
-                      mcap_text = f"₹{mcap:,.0f} Cr ({cap_category})"
+                          cap_cat = "మైక్రో క్యాప్ (Micro Cap - హై రిస్క్)"
+                      mcap_text = f"₹{mcap:,.0f} Cr ({cap_cat})"
                   else:
                       mcap_text = "వివరాలు అందుబాటులో లేవు"
 
                   roe_raw = ratios.get('ROE') or ratios.get('Return on equity')
                   if not roe_raw:
                       for li in soup.find_all('li'):
-                          text_content = li.text.strip()
-                          if 'ROE' in text_content or 'Return on equity' in text_content:
-                              val_span = li.find('span', class_='nowrap value') or li.find('span', class_='number')
-                              if val_span:
-                                  roe_raw = val_span.text.strip()
+                          t = li.text.strip()
+                          if 'ROE' in t or 'Return on equity' in t:
+                              v_span = li.find('span', class_='nowrap value') or li.find('span', class_='number')
+                              if v_span:
+                                  roe_raw = v_span.text.strip()
                                   break
 
                   roe = parse_val(roe_raw)
                   pe_ratio = parse_val(ratios.get('Stock P/E'))
-                  de_ratio = parse_val(ratios.get('Debt to equity'))
-                  if de_ratio is None:
-                      de_ratio = 0.0
+                  de_ratio = parse_val(ratios.get('Debt to equity')) or 0.0
 
                   promoter_holding = None
                   promoter_pledge = 0.0
@@ -269,15 +261,13 @@ jobs:
                   sh_section = soup.find('section', id='shareholding')
                   if sh_section:
                       for tr in sh_section.find_all('tr'):
-                          row_name = tr.text.strip()
+                          r_name = tr.text.strip()
                           cells = tr.find_all('td')
-                          if 'Promoters' in row_name and cells:
+                          if 'Promoters' in r_name and cells:
                               promoter_holding = parse_val(cells[-1].text)
-                          elif 'Pledged' in row_name and cells:
-                              pval = parse_val(cells[-1].text)
-                              if pval is not None:
-                                  promoter_pledge = pval
-                          elif 'FIIs' in row_name and cells:
+                          elif 'Pledged' in r_name and cells:
+                              promoter_pledge = parse_val(cells[-1].text) or 0.0
+                          elif 'FIIs' in r_name and cells:
                               fii_holding = parse_val(cells[-1].text)
 
                   cf_section = soup.find('section', id='cash-flow')
@@ -303,23 +293,11 @@ jobs:
                                       if growth_rate > 0 and pe_ratio:
                                           peg_ratio = round(pe_ratio / growth_rate, 2)
 
-                  sector = "General"
-                  sector_pe = SECTOR_PE_BENCHMARKS.get(sector, 25.0)
-
-                  if not pe_ratio or pe_ratio <= 0:
-                      return None
-
-                  is_pe_discounted = (pe_ratio < sector_pe)
-                  pe_color = "🟢" if is_pe_discounted else "🔴"
-                  if not is_pe_discounted:
+                  sector_pe = SECTOR_PE_BENCHMARKS.get("General", 25.0)
+                  if not pe_ratio or pe_ratio <= 0 or pe_ratio >= sector_pe:
                       return None
 
                   pe_diff = round(((sector_pe - pe_ratio) / sector_pe) * 100, 1)
-                  valuation_status = f"🟢 <b>డిస్కౌంట్ లో దొరుకుతుంది ({pe_diff}% చౌక)</b>"
-                  buy_recommendation = f"ప్రస్తుత ధర వద్ద: ₹{current_price} (సపోర్ట్: ₹{ema20_price})"
-
-                  fii_color = "🟢" if (fii_holding and fii_holding >= 10.0) else "🔴"
-                  fii_text = f"{fii_holding}%" if fii_holding is not None else "N/A"
 
                   c_roe = (roe is not None and roe >= FUNDAMENTAL_CRITERIA["min_roe"])
                   c_de = (de_ratio is not None and de_ratio <= FUNDAMENTAL_CRITERIA["max_debt_to_equity"])
@@ -330,32 +308,19 @@ jobs:
 
                   score = sum([c_roe, c_de, c_peg, c_prom, c_profit, c_fcf])
 
-                  roe_desc = f"ఈ కంపెనీ షేర్ మీద ఏడాదికి {roe}% లాభం సంపాదిస్తోంది" if roe else "లాభాల శాతం అందుబాటులో లేదు"
-                  de_desc = "కంపెనీకి అప్పుల భారం లేదు (చాలా సురక్షితం)" if (de_ratio is not None and de_ratio <= 1.2) else "కంపెనీకి అప్పుల భారం ఎక్కువగా ఉంది"
-                  peg_desc = "లాభాల పెరుగుదలకు తగిన సరసమైన ధరలో ఉంది" if (peg_ratio and peg_ratio <= 2.0) else "లాభాల పెరుగుదల కంటే ప్రస్తుత షేరు ధర కాస్త ఎక్కువగా ఉంది"
-                  fcf_desc = "ఖర్చులు పోను కంపెనీ చేతిలో నికర నగదు మిగులుతోంది" if c_fcf else "కంపెనీ చేతిలో ఖర్చులు పోను నికర నగదు మిగలడం లేదు"
-                  profit_desc = "గతంతో పోలిస్తే కంపెనీ నికర లాభాలు పెరుగుతున్నాయి" if c_profit else "గతంతో పోలిస్తే కంపెనీ నికర లాభాలు తగ్గుతున్నాయి"
-                  pe_desc = f"సెక్టార్ కంటే ఈ షేరు {pe_diff}% తక్కువ ధరకు (చౌకగా) లభిస్తోంది"
-                  promoter_desc = f"కంపెనీ యజమానుల వద్దే {promoter_holding}% వాటా ఉంది" if promoter_holding else "యజమానుల వాటా వివరాలు లేవు"
-
-                  if promoter_pledge > 0:
-                      pledge_text = f"⚠️ <b>తాకట్టు:</b> {promoter_pledge}% షేర్లు తాకట్టులో ఉన్నాయి"
-                  else:
-                      pledge_text = "🔒 <b>తాకట్టు:</b> 0.0% (ఒక్క షేరు కూడా తాకట్టు పెట్టలేదు, చాలా సురక్షితం)"
+                  pledge_text = f"⚠️ <b>తాకట్టు:</b> {promoter_pledge}% షేర్లు తాకట్టులో ఉన్నాయి" if promoter_pledge > 0 else "🔒 <b>తాకట్టు:</b> 0.0% (సురక్షితం)"
 
                   risk_note = ""
                   if not c_profit:
                       risk_note = (
                           "<div style='background: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin-top: 10px;'>"
                           "<b>ℹ️ 🔴 నెగెటివ్ ప్రాఫిట్ గ్రోత్ ఉన్నా ఎందుకు కొనవచ్చు:</b><br>"
-                          "• కంపెనీకి అప్పుల భారం లేదు (D/E &lt; 1.2) & క్యాష్ ఫ్లో బలంగా ఉంది.<br>"
-                          "• లాభాలు తగ్గడం వల్లనే షేరు డిస్కౌంట్ ధరకు లభిస్తోంది.<br>"
-                          "• డైలీ బాటమ్ MACD రివర్సల్ ఉన్నందున సపోర్ట్ వద్ద ఎంట్రీ పరిశీలించవచ్చు."
+                          "• కంపెనీకి అప్పుల భారం లేదు & క్యాష్ ఫ్లో బలంగా ఉంది.<br>"
+                          "• డిస్కౌంట్ వేల్యుయేషన్ వద్ద బాటమ్ MACD రివర్సల్ కనిపిస్తోంది."
                           "</div>"
                       )
 
                   return {
-                      "is_discounted": True,
                       "score_val": score,
                       "pe_diff": pe_diff,
                       "score_text": f"{score}/6",
@@ -368,36 +333,35 @@ jobs:
                       "c_fcf": c_fcf,
                       "c_profit": c_profit,
                       "c_prom": c_prom,
-                      "pe_color": pe_color,
+                      "pe_color": "🟢",
                       "pe_ratio": pe_ratio,
                       "sector_pe": sector_pe,
                       "promoter_holding": promoter_holding,
-                      "roe_desc": roe_desc,
-                      "de_desc": de_desc,
-                      "peg_desc": peg_desc,
-                      "fcf_desc": fcf_desc,
-                      "profit_desc": profit_desc,
-                      "pe_desc": pe_desc,
-                      "promoter_desc": promoter_desc,
+                      "roe_desc": f"ఈ కంపెనీ షేర్ మీద ఏడాదికి {roe}% లాభం సంపాదిస్తోంది" if roe else "లభించలేదు",
+                      "de_desc": "కంపెనీకి అప్పుల భారం లేదు" if de_ratio <= 1.2 else "అప్పుల భారం ఉంది",
+                      "peg_desc": "సరసమైన ధరలో ఉంది" if (peg_ratio and peg_ratio <= 2.0) else "ధర కాస్త ఎక్కువ",
+                      "fcf_desc": "నికర నగదు మిగులుతోంది" if c_fcf else "నగదు మిగలడం లేదు",
+                      "profit_desc": "లాభాలు పెరుగుతున్నాయి" if c_profit else "లాభాలు తగ్గుతున్నాయి",
+                      "pe_desc": f"సెక్టార్ కంటే {pe_diff}% తక్కువ ధరకు (చౌకగా) లభిస్తోంది",
+                      "promoter_desc": f"యజమానుల వద్దే {promoter_holding}% వాటా ఉంది" if promoter_holding else "వివరాలు లేవు",
                       "pledge_text": pledge_text,
                       "risk_note": risk_note,
-                      "fii_line": f"🔴 <b>FII హోల్డింగ్:</b> {fii_text}" if fii_color == "🔴" else f"🟢 <b>FII హోల్డింగ్:</b> {fii_text}",
-                      "val_status": valuation_status,
-                      "buy_advice": buy_recommendation,
+                      "fii_line": f"🟢 <b>FII హోల్డింగ్:</b> {fii_holding}%" if (fii_holding and fii_holding >= 10.0) else f"🔴 <b>FII హోల్డింగ్:</b> {fii_holding or 'N/A'}%",
+                      "val_status": f"🟢 <b>డిస్కౌంట్ లో దొరుకుతుంది ({pe_diff}% చౌక)</b>",
                       "business_model": biz_info,
                       "mcap_text": mcap_text
                   }
-              except Exception as e:
+              except Exception:
                   return None
 
-          def get_color_coded_macd(series, fast=12, slow=26, signal_span=9):
-              exp12 = series.ewm(span=fast, adjust=False).mean()
-              exp26 = series.ewm(span=slow, adjust=False).mean()
+          def get_color_coded_macd(series):
+              exp12 = series.ewm(span=12, adjust=False).mean()
+              exp26 = series.ewm(span=26, adjust=False).mean()
               macd = exp12 - exp26
-              signal = macd.ewm(span=signal_span, adjust=False).mean()
+              signal = macd.ewm(span=9, adjust=False).mean()
 
               if len(macd) < 3:
-                  return "⚪ డేటా లేదు", False, False
+                  return "⚪ డేటా లేదు", False
 
               curr_m = round(macd.iloc[-1], 2)
               curr_s = round(signal.iloc[-1], 2)
@@ -407,7 +371,6 @@ jobs:
               gap = round(curr_m - curr_s, 2)
               abs_gap = abs(gap)
               is_below_zero = (curr_m < 0.0)
-
               is_crossed = (curr_m > curr_s)
               is_fresh = (prev_m <= prev_s) and is_crossed and is_below_zero
 
@@ -422,11 +385,10 @@ jobs:
               else:
                   color_text = "🔴 ఇంకా దూరంగా ఉంది"
 
-              return color_text, is_fresh, is_crossed
+              return color_text, is_fresh
 
-          def generate_live_chart_image(df_d, sym):
-              df_plot = df_d.iloc[-70:].copy()
-
+          def generate_chart(df, sym, timeframe_label):
+              df_plot = df.iloc[-70:].copy()
               exp12 = df_plot['close'].ewm(span=12, adjust=False).mean()
               exp26 = df_plot['close'].ewm(span=26, adjust=False).mean()
               macd = exp12 - exp26
@@ -436,27 +398,19 @@ jobs:
               fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 6), gridspec_kw={'height_ratios': [2, 1.2]}, sharex=True)
               plt.subplots_adjust(hspace=0.08)
 
-              ax1.plot(df_plot.index, df_plot['close'], color='#007acc', linewidth=1.8, label='Price')
+              ax1.plot(df_plot.index, df_plot['close'], color='#007acc', linewidth=1.8, label='Close Price')
               ax1.plot(df_plot.index, df_plot['close'].ewm(span=20).mean(), color='#e67e22', linestyle='--', linewidth=1.2, label='20 EMA')
-              ax1.set_title(f"{sym} - Daily Bottom Reversal & MACD Chart", fontsize=12, fontweight='bold', pad=10)
+              ax1.set_title(f"{sym} - {timeframe_label} Bottom Reversal & MACD Chart", fontsize=12, fontweight='bold', pad=10)
               ax1.grid(True, linestyle=':', alpha=0.6)
               ax1.legend(loc='upper left', fontsize=9)
 
-              ax2.plot(df_plot.index, macd, color='#1e88e5', linewidth=2.0, label='MACD Line (Blue)')
-              ax2.plot(df_plot.index, signal, color='#e53935', linewidth=1.6, label='Signal Line (Red)')
-
+              ax2.plot(df_plot.index, macd, color='#1e88e5', linewidth=2.0, label='MACD Line')
+              ax2.plot(df_plot.index, signal, color='#e53935', linewidth=1.6, label='Signal Line')
               colors = ['#26a69a' if h >= 0 else '#ef5350' for h in hist]
-              ax2.bar(df_plot.index, hist, color=colors, alpha=0.5, width=0.8)
-
-              ax2.axhline(0.0, color='black', linestyle='--', linewidth=1.2, alpha=0.8, label='Zero Line (0.00)')
+              w_bar = 10.0 if 'Monthly' in timeframe_label else (3.5 if 'Weekly' in timeframe_label else 0.8)
+              ax2.bar(df_plot.index, hist, color=colors, alpha=0.5, width=w_bar)
+              ax2.axhline(0.0, color='black', linestyle='--', linewidth=1.2, alpha=0.8)
               ax2.grid(True, linestyle=':', alpha=0.6)
-              ax2.legend(loc='lower left', fontsize=8)
-
-              curr_m = round(macd.iloc[-1], 2)
-              curr_s = round(signal.iloc[-1], 2)
-              diff = round(curr_m - curr_s, 2)
-              gap_text = f"Gap: +{diff}" if diff >= 0 else f"Gap: {diff}"
-              ax2.set_ylabel(f"MACD ({curr_m}/{curr_s})\n{gap_text}", fontsize=8)
 
               buf = io.BytesIO()
               plt.savefig(buf, format='png', dpi=120, bbox_inches='tight')
@@ -464,171 +418,221 @@ jobs:
               buf.seek(0)
               return buf.getvalue()
 
-          def analyze_stock_daily(smart_api, token, from_date_daily, to_date):
-              param_daily = {
-                  "exchange": "NSE",
-                  "symboltoken": str(token),
-                  "interval": "ONE_DAY",
-                  "fromdate": from_date_daily,
-                  "todate": to_date
-              }
-              try:
-                  res_d = smart_api.getCandleData(param_daily)
-              except Exception:
-                  return None
-
-              if not res_d or not res_d.get('status') or not res_d.get('data') or len(res_d['data']) < 220:
-                  return None
-
-              df_d = pd.DataFrame(res_d['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-              df_d['date'] = pd.to_datetime(df_d['date'])
-              df_d.set_index('date', inplace=True)
-              df_d['close'] = df_d['close'].astype(float)
-              df_d['open'] = df_d['open'].astype(float)
-              df_d['volume'] = df_d['volume'].astype(float)
-
-              curr_close = df_d['close'].iloc[-1]
-              curr_open = df_d['open'].iloc[-1]
-              curr_vol = df_d['volume'].iloc[-1]
-
-              if curr_close < curr_open:
-                  return None
-
-              if len(df_d['volume']) < 22:
-                  return None
-
-              vol20_avg = df_d['volume'].iloc[-21:-1].mean()
-              if pd.isna(vol20_avg) or vol20_avg <= 0:
-                  return None
-
-              vol_boost = round(curr_vol / vol20_avg, 2)
-              if vol_boost < 1.1:
-                  return None
-
-              stat_1d, d_fresh, d_bull = get_color_coded_macd(df_d['close'])
-
-              if "🔴" in stat_1d:
-                  return None
-
-              ema20 = df_d['close'].ewm(span=20, adjust=False).mean().iloc[-1]
-
-              return {
-                  "price": round(curr_close, 2),
-                  "vol_boost": vol_boost,
-                  "ema20": round(ema20, 2),
-                  "stat_1d": stat_1d,
-                  "is_daily_fresh": d_fresh,
-                  "df_daily": df_d
-              }
-
-          def main():
-              smart_api = get_angel_session()
-              if not smart_api:
-                  send_gmail_report("⚠️ ఏంజెల్ వన్ లాగిన్ లోపం", "<h3>ఏంజెల్ వన్ లాగిన్ విఫలమైంది. GitHub Secrets సరిగ్గా ఉన్నాయో లేదో తనిఖీ చేయండి.</h3>")
-                  return
-
-              market_fng = get_fear_and_greed()
-
-              to_date = datetime.now().strftime("%Y-%m-%d 15:30")
-              from_date_daily = (datetime.now() - timedelta(days=500)).strftime("%Y-%m-%d 09:15")
-
-              stocks = get_top_2000_stocks()
-              if not stocks:
-                  send_gmail_report("⚠️ డేటా డౌన్‌లోడ్ లోపం", "<h3>ఏంజెల్ వన్ నుండి స్టాక్స్ మాస్టర్ డేటా డౌన్‌లోడ్ కాలేదు.</h3>")
-                  return
-
-              results = []
-              print("NSE టాప్ 2000 డైలీ బాటమ్ MACD స్కానింగ్ ప్రారంభమైంది...")
-
-              for sym, token in stocks:
-                  try:
-                      time.sleep(0.08)
-                      tech_res = analyze_stock_daily(smart_api, token, from_date_daily, to_date)
-                      
-                      if tech_res:
-                          fund_res = analyze_fundamentals(sym, tech_res["price"], tech_res["ema20"])
-                          
-                          if fund_res and fund_res.get("is_discounted"):
-                              print(f"🎯 ఎంట్రీ స్టాక్ దొరికింది: {sym}")
-                              combined = {**tech_res, **fund_res}
-                              results.append((sym, combined))
-                  except Exception:
-                      continue
-
-              today_str = datetime.now().strftime("%d-%m-%Y")
-
-              if not results:
-                  send_gmail_report(
-                      f"📊 బాటమ్ MACD అలర్ట్ ({today_str})",
-                      "<p>ఈరోజు డైలీ టైమ్‌ఫ్రేమ్‌లో బాటమ్ MACD అనుకూలంగా ఉన్న డిస్కౌంట్ స్టాక్స్ ఏవీ లేవు.</p>"
-                  )
-                  return
-
-              results.sort(
-                  key=lambda x: (
-                      x[1].get('score_val', 0),
-                      1 if x[1]['is_daily_fresh'] else 0,
-                      x[1]['vol_boost'],
-                      x[1].get('pe_diff', 0)
-                  ),
-                  reverse=True
-              )
-
-              top_10_stocks = results[:10]
-              images_dict = {}
-
-              html_content = f"""
+          def build_html_report(stocks_data, timeframe_label, date_str, market_fng):
+              images = {}
+              html = f"""
               <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-                <h2 style="color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px;">📉➡️📈 NSE టాప్ 2000 డైలీ బాటమ్ MACD అలర్ట్స్ ({today_str})</h2>
+                <h2 style="color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px;">📊 NSE టాప్ 2000 {timeframe_label} బాటమ్ MACD అలర్ట్స్ ({date_str})</h2>
                 <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 20px;">
                   <b>🏆 టాప్ 10 స్టాక్స్ ర్యాంకుల జాబితా:</b><br><ol>
               """
-              for r, (s, d) in enumerate(top_10_stocks, 1):
-                  html_content += f"<li><b>{s}</b> — ₹{d['price']} (స్కోర్: {d['score_text']})</li>"
-              html_content += "</ol></div>"
+              for r, (s, d) in enumerate(stocks_data, 1):
+                  html += f"<li><b>{s}</b> — ₹{d['price']} (స్కోర్: {d['score_text']})</li>"
+              html += "</ol></div>"
 
-              for rank, (sym, d) in enumerate(top_10_stocks, 1):
-                  cid = f"chart_{sym}_{rank}"
-                  chart_bytes = generate_live_chart_image(d['df_daily'], sym)
-                  images_dict[cid] = chart_bytes
+              for rank, (sym, d) in enumerate(stocks_data, 1):
+                  cid = f"{timeframe_label.lower()}_chart_{sym}_{rank}"
+                  chart_bytes = generate_chart(d['df'], sym, timeframe_label)
+                  images[cid] = chart_bytes
 
-                  is_high_conviction = (d.get('score_val', 0) >= 5) and d['is_daily_fresh']
-                  conviction_tag = "<span style='color: green; font-weight: bold;'>🌟 హై-కన్విక్షన్ డైలీ బాటమ్ సెటప్</span><br>" if is_high_conviction else ""
+                  tag = f"<span style='color: green; font-weight: bold;'>🌟 హై-కన్విక్షన్ {timeframe_label} సెటప్</span><br>" if (d.get('score_val', 0) >= 5 and d['is_fresh']) else ""
 
-                  html_content += f"""
+                  html += f"""
                   <div style="margin-top: 30px; padding: 16px; border: 1px solid #ddd; border-radius: 8px; background: #ffffff;">
                     <h3 style="margin-top: 0; color: #202124;">🏆 ర్యాంక్: S.No.{rank} | 🔥 {sym} — ₹{d['price']}</h3>
-                    {conviction_tag}
+                    {tag}
                     <p>💰 <b>వాల్యూమ్ బూస్ట్:</b> {d['vol_boost']}x</p>
                     <hr style="border: 0; border-top: 1px solid #eee;">
-                    <p><b>📊 డైలీ MACD స్థితి:</b> {d['stat_1d']}</p>
+                    
+                    <div style="margin: 15px 0; text-align: center;">
+                      <img src="cid:{cid}" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 4px;" alt="Chart">
+                    </div>
+
+                    <p><b>📊 {timeframe_label} MACD స్థితి:</b> {d['stat']}</p>
                     <p><b>📈 Fundamental Score: {d['score_text']}</b></p>
                     <ul style="line-height: 1.6;">
-                      <li>{'🟢' if d['c_roe'] else '🔴'} <b>ROE:</b> {d['roe'] if d['roe'] is not None else 'N/A'}% (> 12%)<br><i>└ {d['roe_desc']}</i></li>
-                      <li>{'🟢' if d['c_de'] else '🔴'} <b>D/E:</b> {d['de_ratio'] if d['de_ratio'] is not None else 'N/A'} (&lt; 1.2)<br><i>└ {d['de_desc']}</i></li>
-                      <li>{'🟢' if d['c_peg'] else '🔴'} <b>PEG:</b> {d['peg_ratio'] if d['peg_ratio'] is not None else 'N/A'} (&lt; 2.0)<br><i>└ {d['peg_desc']}</i></li>
+                      <li>{'🟢' if d['c_roe'] else '🔴'} <b>ROE:</b> {d['roe'] or 'N/A'}% (> 12%)<br><i>└ {d['roe_desc']}</i></li>
+                      <li>{'🟢' if d['c_de'] else '🔴'} <b>D/E:</b> {d['de_ratio'] or 'N/A'} (&lt; 1.2)<br><i>└ {d['de_desc']}</i></li>
+                      <li>{'🟢' if d['c_peg'] else '🔴'} <b>PEG:</b> {d['peg_ratio'] or 'N/A'} (&lt; 2.0)<br><i>└ {d['peg_desc']}</i></li>
                       <li>{'🟢' if d['c_fcf'] else '🔴'} <b>Free Cash Flow:</b> {'పాజిటివ్' if d['c_fcf'] else 'నెగెటివ్'}<br><i>└ {d['fcf_desc']}</i></li>
                       <li>{'🟢' if d['c_profit'] else '🔴'} <b>Profit Growth:</b> {'పాజిటివ్' if d['c_profit'] else 'నెగెటివ్'}<br><i>└ {d['profit_desc']}</i></li>
                       <li>{d['pe_color']} <b>P/E:</b> స్టాక్ {round(d['pe_ratio'], 1)} vs సెక్టార్ {d['sector_pe']}<br><i>└ {d['pe_desc']}</i></li>
-                      <li>{'🟢' if d['c_prom'] else '🔴'} <b>Promoter:</b> {d['promoter_holding'] if d['promoter_holding'] is not None else 'N/A'}% (> 35%)<br><i>└ {d['promoter_desc']}</i><br><i>└ {d['pledge_text']}</i></li>
+                      <li>{'🟢' if d['c_prom'] else '🔴'} <b>Promoter:</b> {d['promoter_holding'] or 'N/A'}% (> 35%)<br><i>└ {d['promoter_desc']}</i><br><i>└ {d['pledge_text']}</i></li>
                     </ul>
                     <p>{d['fii_line']}</p>
                     <p>{d['val_status']}</p>
                     <p>{market_fng}</p>
-                    <p>🎯 <b>కొనుగోలు:</b> {d['buy_advice']}</p>
-                    <p>🏢 <b>వ్యాపారం (Business):</b> {d['business_model']}</p>
-                    <p>🏛️ <b>బిజినెస్ క్యాపిటల్ (Market Cap):</b> {d['mcap_text']}</p>
+                    <p>🎯 <b>కొనుగోలు:</b> ప్రస్తుత ధర వద్ద: ₹{d['price']} (20 EMA సపోర్ట్: ₹{d['ema20']})</p>
+                    <p>🏢 <b>వ్యాపారం:</b> {d['business_model']}</p>
+                    <p>🏛️ <b>బిజినెస్ క్యాపిటల్:</b> {d['mcap_text']}</p>
                     {d['risk_note']}
-                    <div style="margin-top: 15px; text-align: center;">
-                      <img src="cid:{cid}" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 4px;" alt="MACD Chart">
-                    </div>
                   </div>
                   """
+              html += "</div>"
+              return html, images
 
-              html_content += "</div>"
+          def is_month_end_trading_day(dt):
+              last_day = calendar.monthrange(dt.year, dt.month)[1]
+              last_dt = datetime(dt.year, dt.month, last_day)
+              while last_dt.weekday() >= 5: # శనివారం లేదా ఆదివారం అయితే ముందు శుక్రవారానికి మారడం
+                  last_dt -= timedelta(days=1)
+              return dt.date() == last_dt.date()
 
-              subject = f"📊 NSE డైలీ బాటమ్ MACD రిపోర్ట్ ({today_str}) - టాప్ {len(top_10_stocks)} స్టాక్స్"
-              send_gmail_report(subject, html_content, images_dict)
+          def main():
+              smart_api = get_angel_session()
+              if not smart_api:
+                  send_gmail_report("⚠️ ఏంజెల్ వన్ లాగిన్ లోపం", "<h3>ఏంజెల్ వన్ లాగిన్ విఫలమైంది. GitHub Secrets తనిఖీ చేయండి.</h3>")
+                  return
+
+              market_fng = get_fear_and_greed()
+              now = datetime.now()
+              today_str = now.strftime("%d-%m-%Y")
+              
+              is_friday = (now.weekday() == 4)
+              is_month_end = is_month_end_trading_day(now)
+
+              to_date = now.strftime("%Y-%m-%d 15:30")
+              # మంత్లీ కోసం దాదాపు 5 ఏళ్ల డేటా, వీక్లీ కోసం 3 ఏళ్లు, సాధారణ డైలీ కోసం 500 రోజులు
+              days_back = 2000 if is_month_end else (1100 if is_friday else 500)
+              from_date = (now - timedelta(days=days_back)).strftime("%Y-%m-%d 09:15")
+
+              stocks = get_top_2000_stocks()
+              if not stocks:
+                  send_gmail_report("⚠️ డేటా డౌన్‌లోడ్ లోపం", "<h3>స్టాక్స్ డేటా డౌన్‌లోడ్ కాలేదు.</h3>")
+                  return
+
+              daily_results = []
+              weekly_results = []
+              monthly_results = []
+
+              print(f"స్కానింగ్ ప్రారంభమైంది... (శుక్రవారమా: {is_friday}, నెల ముగింపా: {is_month_end})")
+
+              for sym, token in stocks:
+                  try:
+                      time.sleep(0.08)
+                      param = {"exchange": "NSE", "symboltoken": str(token), "interval": "ONE_DAY", "fromdate": from_date, "todate": to_date}
+                      res = smart_api.getCandleData(param)
+                      if not res or not res.get('status') or not res.get('data') or len(res['data']) < 220:
+                          continue
+
+                      df_d = pd.DataFrame(res['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                      df_d['date'] = pd.to_datetime(df_d['date'])
+                      df_d.set_index('date', inplace=True)
+                      for col in ['open', 'high', 'low', 'close', 'volume']:
+                          df_d[col] = df_d[col].astype(float)
+
+                      # 1. డైలీ స్క్రీనింగ్ (ప్రతిరోజూ సోమవారం నుండి శుక్రవారం వరకు)
+                      curr_c = df_d['close'].iloc[-1]
+                      curr_o = df_d['open'].iloc[-1]
+                      curr_v = df_d['volume'].iloc[-1]
+
+                      if curr_c >= curr_o and len(df_d['volume']) >= 22:
+                          vol20 = df_d['volume'].iloc[-21:-1].mean()
+                          if vol20 > 0 and (curr_v / vol20) >= 1.1:
+                              stat_1d, d_fresh = get_color_coded_macd(df_d['close'])
+                              if "🔴" not in stat_1d:
+                                  fund = analyze_fundamentals(sym, round(curr_c, 2), round(df_d['close'].ewm(span=20).mean().iloc[-1], 2))
+                                  if fund:
+                                      daily_results.append((sym, {
+                                          "price": round(curr_c, 2),
+                                          "vol_boost": round(curr_v / vol20, 2),
+                                          "ema20": round(df_d['close'].ewm(span=20).mean().iloc[-1], 2),
+                                          "stat": stat_1d,
+                                          "is_fresh": d_fresh,
+                                          "df": df_d,
+                                          **fund
+                                      }))
+
+                      # 2. వీక్లీ స్క్రీనింగ్ (కేవలం శుక్రవారం మాత్రమే)
+                      if is_friday:
+                          df_w = pd.DataFrame()
+                          df_w['close'] = df_d['close'].resample('W-FRI').last()
+                          df_w['open'] = df_d['open'].resample('W-FRI').first()
+                          df_w['volume'] = df_d['volume'].resample('W-FRI').sum()
+                          df_w.dropna(inplace=True)
+
+                          if len(df_w) >= 40:
+                              w_c = df_w['close'].iloc[-1]
+                              w_o = df_w['open'].iloc[-1]
+                              w_v = df_w['volume'].iloc[-1]
+                              vol10_w = df_w['volume'].iloc[-11:-1].mean()
+
+                              if w_c >= w_o and vol10_w > 0 and (w_v / vol10_w) >= 1.05:
+                                  stat_1w, w_fresh = get_color_coded_macd(df_w['close'])
+                                  if "🔴" not in stat_1w:
+                                      fund_w = analyze_fundamentals(sym, round(w_c, 2), round(df_w['close'].ewm(span=20).mean().iloc[-1], 2))
+                                      if fund_w:
+                                          weekly_results.append((sym, {
+                                              "price": round(w_c, 2),
+                                              "vol_boost": round(w_v / vol10_w, 2),
+                                              "ema20": round(df_w['close'].ewm(span=20).mean().iloc[-1], 2),
+                                              "stat": stat_1w,
+                                              "is_fresh": w_fresh,
+                                              "df": df_w,
+                                              **fund_w
+                                          }))
+
+                      # 3. మంత్లీ స్క్రీనింగ్ (నెల ముగింపు ట్రేడింగ్ రోజున మాత్రమే)
+                      if is_month_end:
+                          df_m = pd.DataFrame()
+                          df_m['close'] = df_d['close'].resample('ME').last()
+                          df_m['open'] = df_d['open'].resample('ME').first()
+                          df_m['volume'] = df_d['volume'].resample('ME').sum()
+                          df_m.dropna(inplace=True)
+
+                          if len(df_m) >= 30:
+                              m_c = df_m['close'].iloc[-1]
+                              m_o = df_m['open'].iloc[-1]
+                              m_v = df_m['volume'].iloc[-1]
+                              vol6_m = df_m['volume'].iloc[-7:-1].mean()
+
+                              if m_c >= m_o and vol6_m > 0 and (m_v / vol6_m) >= 1.05:
+                                  stat_1m, m_fresh = get_color_coded_macd(df_m['close'])
+                                  if "🔴" not in stat_1m:
+                                      fund_m = analyze_fundamentals(sym, round(m_c, 2), round(df_m['close'].ewm(span=20).mean().iloc[-1], 2))
+                                      if fund_m:
+                                          monthly_results.append((sym, {
+                                              "price": round(m_c, 2),
+                                              "vol_boost": round(m_v / vol6_m, 2),
+                                              "ema20": round(df_m['close'].ewm(span=20).mean().iloc[-1], 2),
+                                              "stat": stat_1m,
+                                              "is_fresh": m_fresh,
+                                              "df": df_m,
+                                              **fund_m
+                                          }))
+                  except Exception:
+                      continue
+
+              # --- 1. డైలీ రిపోర్ట్ (సోమవారం నుండి శుక్రవారం వరకు ప్రతిరోజూ) ---
+              if daily_results:
+                  daily_results.sort(key=lambda x: (x[1].get('score_val', 0), 1 if x[1]['is_fresh'] else 0, x[1]['vol_boost']), reverse=True)
+                  top_daily = daily_results[:10]
+                  html_d, img_d = build_html_report(top_daily, "Daily", today_str, market_fng)
+                  send_gmail_report(f"📊 NSE డైలీ బాటమ్ MACD రిపోర్ట్ ({today_str})", html_d, img_d)
+              else:
+                  send_gmail_report(f"📊 డైలీ బాటమ్ MACD అలర్ట్ ({today_str})", "<p>ఈరోజు డైలీ MACD అనుకూలమైన స్టాక్స్ ఏవీ లేవు.</p>")
+
+              # --- 2. వీక్లీ రిపోర్ట్ (కేవలం శుక్రవారం మాత్రమే) ---
+              if is_friday:
+                  time.sleep(5)
+                  if weekly_results:
+                      weekly_results.sort(key=lambda x: (x[1].get('score_val', 0), 1 if x[1]['is_fresh'] else 0, x[1]['vol_boost']), reverse=True)
+                      top_weekly = weekly_results[:10]
+                      html_w, img_w = build_html_report(top_weekly, "Weekly", today_str, market_fng)
+                      send_gmail_report(f"📈 NSE వీక్లీ (1W) బాటమ్ MACD రిపోర్ట్ ({today_str})", html_w, img_w)
+                  else:
+                      send_gmail_report(f"📈 వీక్లీ (1W) బాటమ్ MACD అలర్ట్ ({today_str})", "<p>ఈ వారం వీక్లీ MACD అనుకూలమైన స్టాక్స్ ఏవీ లేవు.</p>")
+
+              # --- 3. మంత్లీ రిపోర్ట్ (కేవలం నెల ముగింపు ట్రేడింగ్ రోజు మాత్రమే) ---
+              if is_month_end:
+                  time.sleep(5)
+                  if monthly_results:
+                      monthly_results.sort(key=lambda x: (x[1].get('score_val', 0), 1 if x[1]['is_fresh'] else 0, x[1]['vol_boost']), reverse=True)
+                      top_monthly = monthly_results[:10]
+                      html_m, img_m = build_html_report(top_monthly, "Monthly", today_str, market_fng)
+                      send_gmail_report(f"🌕 NSE మంత్లీ (1M) బాటమ్ MACD రిపోర్ట్ ({today_str})", html_m, img_m)
+                  else:
+                      send_gmail_report(f"🌕 మంత్లీ (1M) బాటమ్ MACD అలర్ట్ ({today_str})", "<p>ఈ నెల మంత్లీ MACD అనుకూలమైన స్టాక్స్ ఏవీ లేవు.</p>")
 
           if __name__ == "__main__":
               main()
