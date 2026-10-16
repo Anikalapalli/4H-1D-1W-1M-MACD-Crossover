@@ -18,7 +18,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
 
       - name: చార్ట్ ఫాంట్స్ ఇన్‌స్టాలేషన్
         run: |
@@ -266,7 +265,9 @@ jobs:
                           if 'Promoters' in r_name and cells:
                               promoter_holding = parse_val(cells[-1].text)
                           elif 'Pledged' in r_name and cells:
-                              promoter_pledge = parse_val(cells[-1].text) or 0.0
+                              pval = parse_val(cells[-1].text)
+                              if pval is not None:
+                                  promoter_pledge = pval
                           elif 'FIIs' in r_name and cells:
                               fii_holding = parse_val(cells[-1].text)
 
@@ -474,7 +475,7 @@ jobs:
           def is_month_end_trading_day(dt):
               last_day = calendar.monthrange(dt.year, dt.month)[1]
               last_dt = datetime(dt.year, dt.month, last_day)
-              while last_dt.weekday() >= 5: # శనివారం లేదా ఆదివారం అయితే ముందు శుక్రవారానికి మారడం
+              while last_dt.weekday() >= 5:
                   last_dt -= timedelta(days=1)
               return dt.date() == last_dt.date()
 
@@ -492,7 +493,6 @@ jobs:
               is_month_end = is_month_end_trading_day(now)
 
               to_date = now.strftime("%Y-%m-%d 15:30")
-              # మంత్లీ కోసం దాదాపు 5 ఏళ్ల డేటా, వీక్లీ కోసం 3 ఏళ్లు, సాధారణ డైలీ కోసం 500 రోజులు
               days_back = 2000 if is_month_end else (1100 if is_friday else 500)
               from_date = (now - timedelta(days=days_back)).strftime("%Y-%m-%d 09:15")
 
@@ -521,7 +521,7 @@ jobs:
                       for col in ['open', 'high', 'low', 'close', 'volume']:
                           df_d[col] = df_d[col].astype(float)
 
-                      # 1. డైలీ స్క్రీనింగ్ (ప్రతిరోజూ సోమవారం నుండి శుక్రవారం వరకు)
+                      # 1. డైలీ స్క్రీనింగ్
                       curr_c = df_d['close'].iloc[-1]
                       curr_o = df_d['open'].iloc[-1]
                       curr_v = df_d['volume'].iloc[-1]
@@ -543,7 +543,7 @@ jobs:
                                           **fund
                                       }))
 
-                      # 2. వీక్లీ స్క్రీనింగ్ (కేవలం శుక్రవారం మాత్రమే)
+                      # 2. వీక్లీ స్క్రీనింగ్ (శుక్రవారం మాత్రమే)
                       if is_friday:
                           df_w = pd.DataFrame()
                           df_w['close'] = df_d['close'].resample('W-FRI').last()
@@ -572,7 +572,7 @@ jobs:
                                               **fund_w
                                           }))
 
-                      # 3. మంత్లీ స్క్రీనింగ్ (నెల ముగింపు ట్రేడింగ్ రోజున మాత్రమే)
+                      # 3. మంత్లీ స్క్రీనింగ్ (నెల ముగింపు ట్రేడింగ్ రోజు మాత్రమే)
                       if is_month_end:
                           df_m = pd.DataFrame()
                           df_m['close'] = df_d['close'].resample('ME').last()
@@ -603,7 +603,7 @@ jobs:
                   except Exception:
                       continue
 
-              # --- 1. డైలీ రిపోర్ట్ (సోమవారం నుండి శుక్రవారం వరకు ప్రతిరోజూ) ---
+              # --- డైలీ రిపోర్ట్ పంపడం ---
               if daily_results:
                   daily_results.sort(key=lambda x: (x[1].get('score_val', 0), 1 if x[1]['is_fresh'] else 0, x[1]['vol_boost']), reverse=True)
                   top_daily = daily_results[:10]
@@ -612,7 +612,7 @@ jobs:
               else:
                   send_gmail_report(f"📊 డైలీ బాటమ్ MACD అలర్ట్ ({today_str})", "<p>ఈరోజు డైలీ MACD అనుకూలమైన స్టాక్స్ ఏవీ లేవు.</p>")
 
-              # --- 2. వీక్లీ రిపోర్ట్ (కేవలం శుక్రవారం మాత్రమే) ---
+              # --- వీక్లీ రిపోర్ట్ పంపడం ---
               if is_friday:
                   time.sleep(5)
                   if weekly_results:
@@ -623,7 +623,7 @@ jobs:
                   else:
                       send_gmail_report(f"📈 వీక్లీ (1W) బాటమ్ MACD అలర్ట్ ({today_str})", "<p>ఈ వారం వీక్లీ MACD అనుకూలమైన స్టాక్స్ ఏవీ లేవు.</p>")
 
-              # --- 3. మంత్లీ రిపోర్ట్ (కేవలం నెల ముగింపు ట్రేడింగ్ రోజు మాత్రమే) ---
+              # --- మంత్లీ రిపోర్ట్ పంపడం ---
               if is_month_end:
                   time.sleep(5)
                   if monthly_results:
