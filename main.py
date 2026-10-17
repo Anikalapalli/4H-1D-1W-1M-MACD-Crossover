@@ -3,12 +3,11 @@ import smtplib
 from email.message import EmailMessage
 import google.generativeai as genai
 
-# 1. API కీలు మరియు ఇమెయిల్ వివరాలను సెట్ చేయడం
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GMAIL_USER = os.environ.get("GMAIL_USER")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+# మీ జెమిని ఏపీఐ కీని ఇక్కడ నేరుగా ఇవ్వండి
+GEMINI_API_KEY = "మీ_జెమిని_ఏపీఐ_కీ_ఇక్కడ_ఇవ్వండి"
+GMAIL_USER = "anikalapallijilani@gmail.com" # మీ జిమెయిల్
+GMAIL_APP_PASSWORD = "మీ_యాప్_పాస్‌వర్డ్" # మీ జిమెయిల్ యాప్ పాస్‌వర్డ్
 
-# జెమిని ఏఐని కాన్ఫిగర్ చేయడం
 genai.configure(api_key=GEMINI_API_KEY)
 
 def generate_macro_report():
@@ -31,7 +30,6 @@ def send_email(report_content):
     msg['From'] = GMAIL_USER
     msg['To'] = GMAIL_USER
 
-    # Gmail SMTP సర్వర్ ద్వారా మెయిల్ పంపడం
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
         smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         smtp.send_message(msg)
