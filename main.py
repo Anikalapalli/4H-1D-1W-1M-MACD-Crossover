@@ -1,14 +1,15 @@
 import os
 import smtplib
 from email.message import EmailMessage
-import google.generativeai as genai
+from google import genai
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GMAIL_USER = os.environ.get("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASS")
 
 def generate_macro_report():
-    genai.configure(api_key=GEMINI_API_KEY)
+    # సరికొత్త google-genai క్లయింట్ ఇనిషియలైజేషన్
+    client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = """
     ప్రపంచ ప్రఖ్యాత ఇన్‌స్టిట్యూషనల్ ఇన్వెస్టర్లు మరియు హెడ్జ్ ఫండ్స్ తరహాలో, గ్లోబల్ ఎకానమీలోని 11 ప్రధాన సెక్టార్లలో 
@@ -18,8 +19,11 @@ def generate_macro_report():
     తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
     """
     
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content(prompt)
+    # లేటెస్ట్ జెమిని మోడల్
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt,
+    )
     return response.text
 
 def send_email(report_content):
