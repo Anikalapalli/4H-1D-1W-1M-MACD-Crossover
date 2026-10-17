@@ -19,7 +19,7 @@ def generate_macro_report():
     తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
     """
     
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-pro')
     response = model.generate_content(prompt)
     return response.text
 
