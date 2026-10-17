@@ -1,17 +1,19 @@
 import os
 import smtplib
 from email.message import EmailMessage
-from google import genai  # సరికొత్త లైబ్రరీ
+import google.generativeai as genai
 
 # గిట్‌హబ్ సీక్రెట్స్ నుండి కీలను తీసుకోవడం
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GMAIL_USER = os.environ.get("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASS")
 
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+else:
+    raise ValueError("GEMINI_API_KEY environment variable is missing!")
+
 def generate_macro_report():
-    # సరికొత్త క్లైంట్ ఇనిషియలైజేషన్
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
     prompt = """
     ప్రపంచ ప్రఖ్యాత ఇన్‌స్టిట్యూషనల్ ఇన్వెస్టర్లు మరియు హెడ్జ్ ఫండ్స్ తరహాలో, గ్లోబల్ ఎకానమీలోని 11 ప్రధాన సెక్టార్లలో 
     (ఇన్‌ఫర్మేషన్ టెక్నాలజీ, ఎనర్జీ, ఫైనాన్షియల్స్, హెల్త్‌కేర్ & ఫార్మా, కన్స్యూమర్ గూడ్స్, మెటల్స్ & మైనింగ్, ఆటోమొబైల్స్, 
@@ -20,11 +22,8 @@ def generate_macro_report():
     తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
     """
     
-    # సరికొత్త జెమిని మోడల్
-    response = client.models.generate_content(
-    model='gemini-1.5-flash',
-    contents=prompt,
-)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    response = model.generate_content(prompt)
     return response.text
 
 def send_email(report_content):
