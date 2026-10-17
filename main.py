@@ -8,7 +8,6 @@ GMAIL_USER = os.environ.get("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASS")
 
 def generate_macro_report():
-    # సరికొత్త google-genai క్లయింట్ ఇనిషియలైజేషన్
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = """
@@ -19,7 +18,6 @@ def generate_macro_report():
     తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
     """
     
-    # లేటెస్ట్ జెమిని మోడల్
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=prompt,
