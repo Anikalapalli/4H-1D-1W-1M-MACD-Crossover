@@ -4,9 +4,9 @@ from email.message import EmailMessage
 import google.generativeai as genai
 
 # మీ జెమిని ఏపీఐ కీని ఇక్కడ నేరుగా ఇవ్వండి
-GEMINI_API_KEY = "మీ_జెమిని_ఏపీఐ_కీ_ఇక్కడ_ఇవ్వండి"
+GEMINI_API_KEY = "AQ.Ab8RN6LJDyb8E83tH0zGLbhy_XQJrqICVjlIwspgAQzdTpEZMg"
 GMAIL_USER = "anikalapallijilani@gmail.com" # మీ జిమెయిల్
-GMAIL_APP_PASSWORD = "మీ_యాప్_పాస్‌వర్డ్" # మీ జిమెయిల్ యాప్ పాస్‌వర్డ్
+GMAIL_APP_PASSWORD = "ljlo lgmo jtqz dwpr" # మీ జిమెయిల్ యాప్ పాస్‌వర్డ్
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -19,7 +19,7 @@ def generate_macro_report():
     తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
     """
     
-    model = genai.GenerativeModel('gemini-1.5-pro')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     response = model.generate_content(prompt)
     return response.text
 
