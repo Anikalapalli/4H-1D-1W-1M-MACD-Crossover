@@ -21,7 +21,8 @@ def generate_macro_report():
     తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
     """
     
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # సరికొత్త మరియు ప్రస్తుతం వర్క్ అవుతున్న మోడల్ పేరు
+    model = genai.GenerativeModel('gemini-2.5-flash')
     response = model.generate_content(prompt)
     return response.text
 
@@ -32,8 +33,8 @@ def send_email(report_content):
     msg['From'] = GMAIL_USER
     msg['To'] = GMAIL_USER
 
-    # సురక్షితమైన SSL కనెక్షన్ (పోర్ట్ 465)
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+    with smtplib.SMTP('smtp.gmail.com', 587) as smtp:
+        smtp.starttls()
         smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         smtp.send_message(msg)
 
