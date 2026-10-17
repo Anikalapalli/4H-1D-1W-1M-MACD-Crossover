@@ -23,7 +23,7 @@ def generate_macro_report():
     """
     
     # అత్యంత స్థిరమైన మోడల్
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-3.8-flash')
     response = model.generate_content(prompt)
     return response.text
 
