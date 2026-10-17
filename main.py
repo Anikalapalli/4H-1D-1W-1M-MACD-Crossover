@@ -21,8 +21,8 @@ def generate_macro_report():
     తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
     """
     
-    # ప్రస్తుతానికి అందుబాటులో ఉన్న మోడల్ పేరు
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    # గూగుల్ సూచించిన సరికొత్త మోడల్
+    model = genai.GenerativeModel('gemini-3.8-flash')
     response = model.generate_content(prompt)
     return response.text
 
