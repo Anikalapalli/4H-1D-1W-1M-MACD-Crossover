@@ -3,7 +3,6 @@ import smtplib
 from email.message import EmailMessage
 import google.generativeai as genai
 
-# గిట్‌హబ్ సీక్రెట్స్ నుండి కీలను తీసుకోవడం
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GMAIL_USER = os.environ.get("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASS")
@@ -22,12 +21,11 @@ def generate_macro_report():
     తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
     """
     
-    # అత్యంత స్థిరమైన మోడల్
     model = genai.GenerativeModel('gemini-1.5-flash')
     response = model.generate_content(prompt)
     return response.text
 
-   def send_email(report_content):
+def send_email(report_content):
     msg = EmailMessage()
     msg.set_content(report_content)
     msg['Subject'] = '🚀 Elite Alpha & Predictive Macro Strategy Alert - 11 Sectors'
