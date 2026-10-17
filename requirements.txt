@@ -1,5 +1,4 @@
-google-genai
-google-api-python-client
+google-generativeai
 pandas
 numpy
 smartapi-python
