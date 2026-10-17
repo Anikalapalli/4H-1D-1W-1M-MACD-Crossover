@@ -1,36 +1,26 @@
 import os
 import smtplib
 from email.message import EmailMessage
-from google import genai
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GMAIL_USER = os.environ.get("GMAIL_USER")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASS")
+# మీ ట్రేడింగ్ బాట్ కి సంబంధించిన పూర్తి కోడ్ ఇక్కడ ఉంటుంది
+# ఉదాహరణకు ఏంజెల్ వన్ (Angel One) SmartAPI స్క్రీనర్ లాజిక్
 
-def generate_macro_report():
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    prompt = """
-    ప్రపంచ ప్రఖ్యాత ఇన్‌స్టిట్యూషనల్ ఇన్వెస్టర్లు మరియు హెడ్జ్ ఫండ్స్ తరహాలో, గ్లోబల్ ఎకానమీలోని 11 ప్రధాన సెక్టార్లలో 
-    (ఇన్‌ఫర్మేషన్ టెక్నాలజీ, ఎనర్జీ, ఫైనాన్షియల్స్, హెల్త్‌కేర్ & ఫార్మా, కన్స్యూమర్ గూడ్స్, మెటల్స్ & మైనింగ్, ఆటోమొబైల్స్, 
-    రియల్ ఎస్టేట్, అగ్రికల్చర్, యుటిలిటీస్ మరియు టెలికాం) రాబోయే 2 లేదా 3 నెలల్లో బయటి ప్రపంచానికి తెలియకముందే 
-    రాబోయే కీలకమైన మార్పులపై, ముందస్తు సంకేతాలపై (Leading Indicators) మరియు FIIల పెట్టుబడుల సరళిపై (Alpha Strategies) 
-    తెలుగులో అత్యంత లోతైన మరియు ప్రొఫెషనల్ విశ్లేషణను అందించండి.
-    """
-    
-    # గూగుల్ అఫీషియల్ డాక్యుమెంటేషన్ ప్రకారం సరికొత్త మోడల్
-    interaction = client.interactions.create(
-        model='gemini-3.8-flash',
-        input=prompt,
-    )
-    return interaction.output_text
+def run_trading_bot():
+    print("ట్రేడింగ్ బాట్ స్క్రీనింగ్ ప్రారంభమవుతోంది...")
+    # ఇక్కడ మీ లాజిక్ రన్ అవుతుంది
+    report = "Nifty 500 MACD Crossover Screening Completed Successfully."
+    return report
 
 def send_email(report_content):
+    GMAIL_USER = os.environ.get("GMAIL_USER")
+    GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASS")
+    EMAIL_RECEIVER = os.environ.get("EMAIL_RECEIVER", GMAIL_USER)
+
     msg = EmailMessage()
     msg.set_content(report_content)
-    msg['Subject'] = '🚀 Elite Alpha & Predictive Macro Strategy Alert - 11 Sectors'
+    msg['Subject'] = '📊 Nifty 500 MACD Crossover Strategy Report'
     msg['From'] = GMAIL_USER
-    msg['To'] = GMAIL_USER
+    msg['To'] = EMAIL_RECEIVER
 
     with smtplib.SMTP('smtp.gmail.com', 587) as smtp:
         smtp.starttls()
@@ -38,8 +28,7 @@ def send_email(report_content):
         smtp.send_message(msg)
 
 if __name__ == "__main__":
-    print("గ్లోబల్ మార్కెట్ విశ్లేషణ ప్రారంభమవుతోంది...")
-    report = generate_macro_report()
-    print("విశ్లేషణ పూర్తయింది, ఇమెయిల్ పంపుతోంది...")
-    send_email(report)
-    print("ఇమెయిల్ విజయవంతంగా పంపబడింది!")
+    print("প্রোগ্রাম రన్ అవుతోంది...")
+    result = run_trading_bot()
+    send_email(result)
+    print("రిపోర్ట్ విజయవంతంగా ఇమెయిల్ చేయబడింది!")
