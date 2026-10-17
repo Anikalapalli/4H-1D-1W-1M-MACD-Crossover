@@ -23,18 +23,19 @@ def generate_macro_report():
     """
     
     # అత్యంత స్థిరమైన మోడల్
-    model = genai.GenerativeModel('gemini-3.8-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     response = model.generate_content(prompt)
     return response.text
 
-def send_email(report_content):
+   def send_email(report_content):
     msg = EmailMessage()
     msg.set_content(report_content)
     msg['Subject'] = '🚀 Elite Alpha & Predictive Macro Strategy Alert - 11 Sectors'
     msg['From'] = GMAIL_USER
     msg['To'] = GMAIL_USER
 
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+    with smtplib.SMTP('smtp.gmail.com', 587) as smtp:
+        smtp.starttls()
         smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         smtp.send_message(msg)
 
