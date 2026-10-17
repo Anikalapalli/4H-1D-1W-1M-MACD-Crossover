@@ -1,0 +1,31 @@
+name: Global 11-Sector Predictive Macro Alert
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # ప్రతిరోజూ ఉదయం 2 గంటలకు రన్ అవుతుంది
+  workflow_dispatch:
+
+jobs:
+  run-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: కోడ్ చెకౌట్
+        uses: actions/checkout@v4
+
+      - name: పైథాన్ ఇన్‌స్టాలేషన్
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: అవసరమైన పైథాన్ లైబ్రరీల ఇన్‌స్టాలేషన్
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-generativeai
+
+      - name: మార్కెట్ విశ్లేషణ స్క్రిప్ట్ రన్ చేయడం
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          python main.py
